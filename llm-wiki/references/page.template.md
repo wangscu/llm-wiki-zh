@@ -2,24 +2,23 @@
 title:
 type: concept
 updated: YYYY-MM-DD
-sources: []     # paths (relative for in-project, absolute for external) and/or URLs
-see_also: []    # relative paths to related wiki pages
+sources: []     # 路径（项目内相对路径，项目外绝对路径）和/或 URL
+see_also: []    # 相关 wiki 页面的相对路径
 tags: []
 ---
 
-# <Title>
+# <标题>
 
 <!--
-Body sections are defined by SCHEMA.md. The default convention for
-`type: concept` and `type: entity`:
+正文结构由 SCHEMA.md 定义。`type: concept` 和 `type: entity` 的默认约定：
 
-- One-paragraph hook
-- ## Key claims (bulleted, each with a citation)
-- ## Open questions
-- ## See also
+- 一段引言
+- ## 关键声明（逐条列出，每条附引用）
+- ## 开放问题
+- ## 参见
 
-Other types (source, synthesis, archive) follow their own conventions.
+其他类型（source、synthesis、archive）遵循各自的约定。
 
-Quality rule: every claim traces to a `sources:` entry. Hedge ambiguous
-ones in the body.
+质量规则：每条声明都能追溯到 `sources:` 中的条目。正文中
+对模糊内容要注明不确定性。
 -->

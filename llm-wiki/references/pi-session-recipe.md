@@ -1,95 +1,95 @@
-# Pi session recipe
+# Pi 会话配方
 
-How to traverse and ingest Pi agent sessions. Lazy-loaded reference for the
-Sessions step of the LLM Wiki ingest workflow.
+如何遍历和摄取 Pi 代理会话。LLM Wiki 摄取工作流中
+会话步骤的延迟加载参考文档。
 
-## Directory layout
+## 目录布局
 
-Pi stores sessions at `~/.pi/agent/sessions/--<encoded-cwd>--/`, where
-`<encoded-cwd>` is the absolute working directory with `/` replaced by `-`.
-Multiple JSONL files in one directory = resumed sessions for the same project.
+Pi 将会话存储在 `~/.pi/agent/sessions/--<encoded-cwd>--/`，其中
+`<encoded-cwd>` 是绝对工作目录路径，将 `/` 替换为 `-`。
+同一目录下的多个 JSONL 文件 = 同一项目的恢复会话。
 
-## Step 0: Fork detection (MANDATORY)
+## 第 0 步：分叉检测（必须执行）
 
-Before reading any content, check for forks. A fork means resumed sessions,
-subagent spawns, or repeated user messages — each branch may contain distinct
-topic content.
+在阅读任何内容之前，检查分叉。分叉意味着恢复的会话、
+子代理生成或重复的用户消息——每个分支可能包含不同的
+主题内容。
 
 ```bash
 SESSION="$HOME/.pi/agent/sessions/--<encoded-cwd>--/<file>.jsonl"
 
-# 1. Forks (parents with >1 child) — NEVER skip
+# 1. 分叉（拥有 >1 个子节点的父节点）——绝不跳过
 jq -r 'select(.type=="message") | .parentId' "$SESSION" | sort | uniq -c | awk '$1>1 {print}'
 
-# 2. User messages with timestamps — detect multi-day sessions
+# 2. 带时间戳的用户消息——检测跨日会话
 jq -r 'select(.type=="message" and .message.role=="user") |
        "\(.timestamp[0:19]): \((.message.content | if type=="string" then . else (map(.text) | join("")) end) | .[0:100])"' "$SESSION"
 ```
 
-**If forks exist, read branch by branch.** Do not sort by timestamp and read
-linearly. Extract ALL assistant messages with `parentId` metadata.
+**如果存在分叉，逐分支阅读。** 不要按时间戳排序后线性
+阅读。提取所有带 `parentId` 元数据的助手消息。
 
-## Step 1: Extract substantive content
+## 第 1 步：提取实质性内容
 
 ```bash
-# All assistant text and thinking blocks (across ALL branches)
+# 所有助手文本和思考块（跨所有分支）
 jq -r 'select(.type=="message" and .message.role=="assistant") |
        "\n--- parent=\(.parentId) ts=\(.timestamp) ---\n" +
        (.message.content | if type=="string" then . else
          (map(select(.type=="text" or .type=="thinking") | "[\(.type)] \(.text)") | join("\n")) end)' "$SESSION"
 ```
 
-**Key rule:** If `assistant` messages contain only `thinking: null` and no
-`text`, the assistant produced artifacts via `write`/`edit` tool calls. Check
-`custom` events (Step 2) for what was produced.
+**关键规则：** 如果助手消息仅包含 `thinking: null` 且没有
+`text`，说明助手通过 `write`/`edit` 工具调用产出了产物。检查
+`custom` 事件（第 2 步）以了解产出了什么。
 
-## Step 2: Extract failures and notable events from custom events
+## 第 2 步：从自定义事件中提取失败和值得注意的事件
 
 ```bash
-# Fetch failures
-echo "=== Fetch failures ==="
+# 获取失败
+echo "=== 获取失败 ==="
 jq -r 'select(.type=="custom" and .data.type=="fetch_content" and .data.error) |
        "FAIL \(.data.urls[0]): \(.data.error)"' "$SESSION"
 
-# Rate limits / errors
-echo "=== Errors ==="
+# 速率限制 / 错误
+echo "=== 错误 ==="
 jq -r 'select(.type=="custom" and (.data.type=="error" or .data.type=="rate_limit")) |
        "\(.data.type): \(.data | tostring)"' "$SESSION"
 
-# Tool usage histogram
-echo "=== Tools ==="
+# 工具使用统计
+echo "=== 工具 ==="
 jq -r 'select(.type=="custom" and .data.type=="tool_execution_end") | .data.toolName' "$SESSION" | sort | uniq -c | sort -rn
 
-# Artifacts produced via write/edit
-echo "=== Artifacts ==="
+# 通过 write/edit 产出的产物
+echo "=== 产物 ==="
 jq -r 'select(.type=="custom" and .data.type=="tool_execution_end" and
        (.data.toolName=="write" or .data.toolName=="edit")) |
        "\(.data.toolName): \(.data.result // .data.args // \"unknown\")"' "$SESSION"
 ```
 
-**Document these in the session page:**
-- Failed fetches (auth, 429, sign-in walls)
-- Rate limits or interruptions
-- Artifacts produced via tool calls
+**在会话页面中记录以下内容：**
+- 获取失败（认证、429、登录墙）
+- 速率限制或中断
+- 通过工具调用产生的产物
 
-## Step 3: Extract cited sources
+## 第 3 步：提取引用的来源
 
 ```bash
-# URLs from web_search + fetch_content
+# 来自 web_search + fetch_content 的 URL
 jq -r 'select(.type=="custom" and .data.type=="web_search") | .data.queries[]?' "$SESSION"
 jq -r 'select(.type=="custom" and .data.type=="fetch_content") |
        (.data.urls[]?, .data.queries[]?)' "$SESSION" | sort -u
 
-# Files touched
+# 被触及的文件
 jq -r '.. | strings' "$SESSION" |
   grep -oE '[a-zA-Z_./~-]+\.(py|cu|md|txt|pdf|h|cc|json|jsonl|ts|js)' | sort -u
 ```
 
-## Session page template
+## 会话页面模板
 
 ```markdown
 ---
-title: "Session YYYY-MM-DD: <topic>"
+title: "Session YYYY-MM-DD: <主题>"
 type: session
 updated: YYYY-MM-DD
 sources:
@@ -97,24 +97,24 @@ sources:
 see_also: []
 ---
 
-## Hook
-One-line summary.
+## 引言
+一行摘要。
 
-## Structure
-Linear / forked (N branches). Multi-day? Rate limit hit?
+## 结构
+线性 / 分叉（N 个分支）。是否跨日？是否触发速率限制？
 
-## Key content
-- User asked X → assistant responded with Y
+## 关键内容
+- 用户询问 X → 助手回复 Y
 
-## Notable events
-- Rate limit at TS: "..."
-- Fetch failure: URL, reason
-- Artifacts produced: file paths
+## 值得注意的事件
+- 速率限制，时间戳："..."
+- 获取失败：URL、原因
+- 产生的产物：文件路径
 ```
 
-## Mistakes to avoid
+## 应避免的错误
 
-1. **❌ Linear timestamp scan** — misses resumed sessions and forked branches.
-2. **❌ Skipping custom events** — misses fetch failures, rate limits, errors.
-3. **❌ Treating tool-call branches as empty** — assistant may have produced a
-   40KB file via `write`/`edit` with no text reply.
+1. **❌ 按时间戳线性扫描**——会遗漏恢复会话和分叉分支。
+2. **❌ 跳过自定义事件**——会遗漏获取失败、速率限制、错误。
+3. **❌ 将工具调用分支视为空**——助手可能通过
+   `write`/`edit` 产出了 40KB 的文件但无文本回复。

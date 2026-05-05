@@ -1,7 +1,7 @@
 {
   "name": "@micuintus/llm-wiki",
   "version": "1.0.4",
-  "description": "Karpathy's LLM Wiki pattern as a minimal, agent-agnostic skill for Pi",
+  "description": "Karpathy 的 LLM Wiki 模式：面向 pi 的极简、跨代理技能",
   "keywords": [
     "pi-package",
     "llm-wiki",
@@ -9,14 +9,14 @@
     "knowledge-base",
     "second-brain"
   ],
-  "homepage": "https://github.com/micuintus/llm-wiki",
+  "homepage": "https://github.com/wangscu/llm-wiki-zh",
   "bugs": {
-    "url": "https://github.com/micuintus/llm-wiki/issues"
+    "url": "https://github.com/wangscu/llm-wiki-zh/issues"
   },
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/micuintus/llm-wiki.git"
+    "url": "git+https://github.com/wangscu/llm-wiki-zh.git"
   },
   "files": [
     "llm-wiki",

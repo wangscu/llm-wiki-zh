@@ -19,13 +19,13 @@
     "url": "git+https://github.com/wangscu/llm-wiki-zh.git"
   },
   "files": [
-    "llm-wiki",
+    "llm-wiki-zh",
     "README.md",
     "LICENSE"
   ],
   "pi": {
     "skills": [
-      "./llm-wiki"
+      "./llm-wiki-zh"
     ]
   }
 }

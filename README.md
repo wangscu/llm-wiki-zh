@@ -27,7 +27,7 @@ pi install https://github.com/wangscu/llm-wiki-zh
 ```
 
 ### Claude Code / Codex / 其他代理
-将 `llm-wiki/SKILL.md` 和 `llm-wiki/references/` 复制到你的代理技能目录中。
+将 `llm-wiki-zh/SKILL.md` 和 `llm-wiki-zh/references/` 复制到你的代理技能目录中。
 
 ## 适用场景
 
@@ -39,7 +39,7 @@ pi install https://github.com/wangscu/llm-wiki-zh
 ## 结构
 
 ```
-llm-wiki/
+llm-wiki-zh/
 ├── SKILL.md              # 技能指令（~12 KB，极简）
 ├── references/
 │   ├── page.template.md      # wiki 页面 frontmatter 模板

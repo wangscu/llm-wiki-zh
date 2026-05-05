@@ -29,6 +29,18 @@ pi install https://github.com/wangscu/llm-wiki-zh
 ### Claude Code / Codex / 其他代理
 将 `llm-wiki-zh/SKILL.md` 和 `llm-wiki-zh/references/` 复制到你的代理技能目录中。
 
+## 使用方法
+
+安装后，通过三个命令操作 wiki：
+
+| 命令 | 作用 | 示例 |
+|------|------|------|
+| `/wiki-ingest` | 录入材料到 wiki | `/wiki-ingest 这篇论文`、`把这几段对话录入wiki` |
+| `/wiki-query` | 查询 wiki 中的知识 | `/wiki-query transformers`、`wiki里关于微调怎么说` |
+| `/wiki-lint` | 检查 wiki 健康度 | `/wiki-lint`、`检查wiki` |
+
+**实现原理：** pi 技能无需额外代码——`SKILL.md` 本身就是实现。当用户输入命令关键词时，pi 自动匹配并加载技能指令，LLM 根据指令执行对应操作流程。三个命令分别映射到 SKILL.md 中的摄取（Ingest）、查询（Query）、检查（Lint）完整流程。
+
 ## 适用场景
 
 - **书籍和论文研究**——摄取章节、论文、图表；在阅读过程中构建互链的概念页面

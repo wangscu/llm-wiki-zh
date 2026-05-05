@@ -23,9 +23,15 @@
     "README.md",
     "LICENSE"
   ],
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*"
+  },
   "pi": {
     "skills": [
       "./llm-wiki-zh"
+    ],
+    "extensions": [
+      "./llm-wiki-zh/extension.ts"
     ]
   }
 }

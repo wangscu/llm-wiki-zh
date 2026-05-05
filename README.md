@@ -16,30 +16,29 @@ Karpathy 的 [LLM Wiki 模式](https://gist.github.com/karpathy/442a6bf555914893
 
 ## 安装
 
-### Pi（npm — 推荐）
-```bash
-pi install npm:@micuintus/llm-wiki
-```
-
-### Pi（git）
+### Pi（git — 推荐）
 ```bash
 pi install https://github.com/wangscu/llm-wiki-zh
 ```
+
+安装后自动加载扩展和技能，三个命令即刻可用。
 
 ### Claude Code / Codex / 其他代理
 将 `llm-wiki-zh/SKILL.md` 和 `llm-wiki-zh/references/` 复制到你的代理技能目录中。
 
 ## 使用方法
 
-安装后，通过三个命令操作 wiki：
+安装后，三个 pi 命令即刻可用：
 
 | 命令 | 作用 | 示例 |
 |------|------|------|
-| `/wiki-ingest` | 录入材料到 wiki | `/wiki-ingest 这篇论文`、`把这几段对话录入wiki` |
-| `/wiki-query` | 查询 wiki 中的知识 | `/wiki-query transformers`、`wiki里关于微调怎么说` |
-| `/wiki-lint` | 检查 wiki 健康度 | `/wiki-lint`、`检查wiki` |
+| `/wiki-ingest <内容>` | 录入材料到 wiki | `/wiki-ingest 这篇论文` |
+| `/wiki-query <主题>` | 查询 wiki 中的知识 | `/wiki-query transformers` |
+| `/wiki-lint` | 检查 wiki 健康度 | `/wiki-lint` |
 
-**实现原理：** pi 技能无需额外代码——`SKILL.md` 本身就是实现。当用户输入命令关键词时，pi 自动匹配并加载技能指令，LLM 根据指令执行对应操作流程。三个命令分别映射到 SKILL.md 中的摄取（Ingest）、查询（Query）、检查（Lint）完整流程。
+也可以直接用中文触发：`把这几段对话录入wiki`、`wiki里关于微调怎么说`、`检查wiki`。
+
+**实现原理：** 命令由 `extension.ts` 注册为真正的 pi 命令（含自动补全），执行时发送触发消息到代理；代理匹配技能 description 中的触发短语，自动加载 `SKILL.md` 并按页面类型规则执行摄取/查询/检查流程。无需额外代码——`SKILL.md` 本身就是完整的操作手册。
 
 ## 适用场景
 
@@ -54,11 +53,12 @@ pi install https://github.com/wangscu/llm-wiki-zh
 llm-wiki-zh/
 ├── SKILL.md              # 技能指令（~12 KB，极简）
 ├── references/
-│   ├── page.template.md      # wiki 页面 frontmatter 模板
-│   ├── source.template.md    # 原始来源副本模板
-│   ├── SCHEMA.template.md    # 各项目 schema 骨架
-│   ├── pi-session-recipe.md  # Pi JSONL 分叉检测 + 提取
-│   └── agent-session-recipe.md  # Claude Code、opencode、Gemini CLI
+│   ├── extension.ts              # 注册 /wiki-ingest、/wiki-query、/wiki-lint 命令
+│   ├── page.template.md          # wiki 页面 frontmatter 模板
+│   ├── source.template.md        # 原始来源副本模板
+│   ├── SCHEMA.template.md        # 各项目 schema 骨架
+│   ├── pi-session-recipe.md      # Pi JSONL 分叉检测 + 提取
+│   └── agent-session-recipe.md   # Claude Code、opencode、Gemini CLI
 ```
 
 ## SKILL.md 包含的内容

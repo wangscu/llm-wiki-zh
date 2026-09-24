@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -51,7 +51,7 @@ function redactUrl(urlText, state) {
   let result = urlText;
   try {
     const parsed = new URL(result);
-    if ((parsed.protocol === "http:" || parsed.protocol === "https:") && (parsed.username !== "" || parsed.password !== "")) {
+    if (parsed.username !== "" || parsed.password !== "") {
       const authorityStart = result.indexOf("://") + 3;
       const relativeAuthorityEnd = result.slice(authorityStart).search(/[/?#]/u);
       const authorityEnd = relativeAuthorityEnd === -1 ? result.length : authorityStart + relativeAuthorityEnd;
@@ -92,12 +92,18 @@ function redactUrl(urlText, state) {
 }
 
 function redactUrls(value, state) {
-  return value.replace(/\bhttps?:\/\/[^\s<>"']+/giu, (urlText) => redactUrl(urlText, state));
+  return value.replace(/\b[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s<>"']+/gu, (urlText) => redactUrl(urlText, state));
 }
 
 export function redactText(text) {
   const state = { redactions: 0 };
-  let redacted = redactUrls(String(text), state);
+  let redacted = replaceMatches(
+    String(text),
+    /-----BEGIN ((?:[A-Z0-9]+ )*PRIVATE KEY)-----[\s\S]*?-----END \1-----/g,
+    "[REDACTED]",
+    state,
+  );
+  redacted = redactUrls(redacted, state);
   redacted = replaceMatches(
     redacted,
     /((['"]?)Authorization\2\s*[:=]\s*)(?:"((?:Bearer|Basic)\s+)((?:\\.|[^"\\])*)"|'((?:Bearer|Basic)\s+)((?:\\.|[^'\\])*)'|((?:Bearer|Basic)\s+)([^\s,;}]+))/gi,
@@ -127,7 +133,7 @@ export function redactText(text) {
   );
   redacted = replaceMatches(
     redacted,
-    /(?<![A-Za-z0-9_])((['"]?)(?:api[_-]?key|password|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret[_-]?key|private[_-]?key|[A-Za-z][A-Za-z0-9_]*(?:_[A-Za-z0-9]+)*_(?:api_key|token|secret|secret_access_key|secret_key|private_key|password))(?![A-Za-z0-9_])\2\s*[:=]\s*)(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|([^\s,;&}]+))/gi,
+    /(?<![A-Za-z0-9_-])((['"]?)(?:api[_-]?key|password|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret[_-]?key|private[_-]?key|token|secret|[A-Za-z][A-Za-z0-9_]*(?:_[A-Za-z0-9]+)*_(?:api_key|token|secret|secret_access_key|secret_key|private_key|password))(?![A-Za-z0-9_-])\2\s*[:=]\s*)(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|([^\s,;&}]+))/gi,
     (match, prefix, _keyQuote, doubleValue, singleValue, bareValue) => {
       const value = doubleValue ?? singleValue ?? bareValue;
       if (isRedacted(value)) {
@@ -136,6 +142,12 @@ export function redactText(text) {
       const quote = doubleValue !== undefined ? '"' : singleValue !== undefined ? "'" : "";
       return `${prefix}${quote}[REDACTED]${quote}`;
     },
+    state,
+  );
+  redacted = replaceMatches(
+    redacted,
+    /(?<![A-Za-z0-9_-])((?:Bearer|Basic)\s+)(?!\[REDACTED\])([A-Za-z0-9._~+\/-]+={0,2})(?![A-Za-z0-9._~+\/=-])/gi,
+    (_match, scheme) => `${scheme}[REDACTED]`,
     state,
   );
   redacted = replaceMatches(redacted, /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, "[REDACTED]", state);
@@ -321,9 +333,6 @@ function codexPayload(record) {
   if (record.payload !== null && typeof record.payload === "object" && !Array.isArray(record.payload)) {
     return record.payload;
   }
-  if (record.item !== null && typeof record.item === "object" && !Array.isArray(record.item)) {
-    return record.item;
-  }
   return undefined;
 }
 
@@ -341,7 +350,14 @@ function normalizeCodexRecord(record, stats) {
   if (payload === undefined) {
     return { recognized: false };
   }
-  if (payload.role === "user" || payload.role === "assistant") {
+  if (payload.type === "message" && (payload.role === "user" || payload.role === "assistant")) {
+    if (
+      payload.role === "assistant"
+      && payload.phase !== undefined
+      && payload.phase !== "final_answer"
+    ) {
+      return { recognized: false };
+    }
     const fragments = textBlocks(payload.content, new Set(["input_text", "output_text", "text"]));
     return {
       recognized: true,
@@ -462,6 +478,21 @@ async function main() {
   }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+async function isMainModule() {
+  if (!process.argv[1]) {
+    return false;
+  }
+  try {
+    const [invokedPath, modulePath] = await Promise.all([
+      realpath(path.resolve(process.argv[1])),
+      realpath(fileURLToPath(import.meta.url)),
+    ]);
+    return invokedPath === modulePath;
+  } catch {
+    return path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+  }
+}
+
+if (await isMainModule()) {
   await main();
 }

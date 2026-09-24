@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -12,6 +12,12 @@ const SCRIPT = path.join(ROOT, "llm-wiki-zh/scripts/normalize-session.mjs");
 
 function fixture(name) {
   return path.join(import.meta.dirname, "fixtures/sessions", name);
+}
+
+async function makeTempDirectory(t, prefix) {
+  const directory = await mkdtemp(path.join(tmpdir(), prefix));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  return directory;
 }
 
 test("normalizes a small Claude transcript without secrets or reasoning", async () => {
@@ -114,8 +120,8 @@ test("auto mode rejects mixed and unsupported inputs instead of guessing", async
   );
 });
 
-test("CLI fails when no supported safe message can be extracted", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "normalize-session-empty-"));
+test("CLI fails when no supported safe message can be extracted", async (t) => {
+  const directory = await makeTempDirectory(t, "normalize-session-empty-");
   const inputPath = path.join(directory, "empty.jsonl");
   await writeFile(inputPath, '{"type":"future_record","payload":{"password":"do-not-print"}}\n');
 
@@ -125,6 +131,104 @@ test("CLI fails when no supported safe message can be extracted", async () => {
   assert.equal(run.stdout, "");
   assert.match(run.stderr, /未找到可安全提取的消息 \/ no safely extractable messages/);
   assert.doesNotMatch(run.stderr, /do-not-print/);
+});
+
+test("Codex only renders known message payloads and final assistant phases", () => {
+  const input = [
+    {
+      type: "response_item",
+      payload: {
+        type: "future_private_record",
+        role: "assistant",
+        content: [{ type: "output_text", text: "PRIVATE INTERNAL SYNTH_UNKNOWN_PAYLOAD" }],
+      },
+    },
+    {
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "assistant",
+        phase: "reasoning",
+        content: [{ type: "output_text", text: "PRIVATE INTERNAL SYNTH_REASONING_PHASE" }],
+      },
+    },
+    {
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "assistant",
+        phase: "commentary",
+        content: [{ type: "output_text", text: "INTERMEDIATE SYNTH_COMMENTARY" }],
+      },
+    },
+    {
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "Legacy final answer." }],
+      },
+    },
+    {
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "assistant",
+        phase: "final_answer",
+        content: [{ type: "output_text", text: "Explicit final answer." }],
+      },
+    },
+  ].map(value => JSON.stringify(value)).join("\n");
+
+  const result = normalizeSession(input, { format: "codex" });
+
+  assert.equal(
+    result.output,
+    "# 规范化代理会话\n\n## Assistant\nLegacy final answer.\n\n## Assistant\nExplicit final answer.\n",
+  );
+  assert.doesNotMatch(
+    result.output,
+    /SYNTH_UNKNOWN_PAYLOAD|SYNTH_REASONING_PHASE|SYNTH_COMMENTARY/,
+  );
+  assert.equal(result.stats.messages, 2);
+  assert.equal(result.stats.unknownRecords, 3);
+});
+
+test("Codex rejects unknown user shapes and assistant phases deny-by-default", () => {
+  const input = [
+    {
+      type: "response_item",
+      item: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "SYNTH_ITEM_FALLBACK" }],
+      },
+    },
+    {
+      type: "response_item",
+      payload: {
+        type: "future_message",
+        role: "user",
+        content: [{ type: "input_text", text: "SYNTH_UNKNOWN_USER" }],
+      },
+    },
+    {
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "assistant",
+        phase: "future_phase",
+        content: [{ type: "output_text", text: "SYNTH_UNKNOWN_PHASE" }],
+      },
+    },
+  ].map(value => JSON.stringify(value)).join("\n");
+
+  const result = normalizeSession(input, { format: "codex" });
+
+  assert.equal(result.output, "# 规范化代理会话\n");
+  assert.equal(result.stats.messages, 0);
+  assert.equal(result.stats.unknownRecords, 3);
+  assert.doesNotMatch(result.output, /SYNTH_/);
 });
 
 test("CLI rejects missing files, unknown arguments, and unsupported format values", () => {
@@ -295,6 +399,110 @@ test("redacts encoded query keys, Google credentials, and URL userinfo", () => {
   for (const [input, expected] of cases) {
     assert.deepEqual(redactText(input), { text: expected, redactions: 1 });
   }
+});
+
+test("redacts PEM private keys but preserves public keys and certificates", () => {
+  const privateCases = [
+    [
+      "before\n-----BEGIN PRIVATE KEY-----\nSYNTH_PRIVATE_KEY_MATERIAL\n-----END PRIVATE KEY-----\nafter",
+      "before\n[REDACTED]\nafter",
+    ],
+    [
+      "-----BEGIN RSA PRIVATE KEY-----\nSYNTH_RSA_PRIVATE\n-----END RSA PRIVATE KEY-----",
+      "[REDACTED]",
+    ],
+    [
+      "-----BEGIN OPENSSH PRIVATE KEY-----\nSYNTH_OPENSSH_PRIVATE\n-----END OPENSSH PRIVATE KEY-----",
+      "[REDACTED]",
+    ],
+  ];
+
+  for (const [input, expected] of privateCases) {
+    assert.deepEqual(redactText(input), { text: expected, redactions: 1 });
+    assert.deepEqual(redactText(expected), { text: expected, redactions: 0 });
+  }
+
+  const safeBlocks = [
+    "-----BEGIN PUBLIC KEY-----\nSYNTH_PUBLIC_MATERIAL\n-----END PUBLIC KEY-----",
+    "-----BEGIN CERTIFICATE-----\nSYNTH_CERTIFICATE_MATERIAL\n-----END CERTIFICATE-----",
+  ];
+  for (const input of safeBlocks) {
+    assert.deepEqual(redactText(input), { text: input, redactions: 0 });
+  }
+});
+
+test("removes URI userinfo across common schemes without changing safe URIs", () => {
+  const cases = [
+    [
+      "DATABASE_URL=postgres://alice:SYNTH_DB_PASSWORD@example.test/prod",
+      "DATABASE_URL=postgres://example.test/prod",
+      1,
+    ],
+    [
+      "mongodb://user:SYNTH_MONGO_PASSWORD@db.example.test:27017/app?replicaSet=prod",
+      "mongodb://db.example.test:27017/app?replicaSet=prod",
+      1,
+    ],
+    ["postgres://db.example.test/prod", "postgres://db.example.test/prod", 0],
+    ["not-a-uri user:SYNTH_NOT_URI@example.test", "not-a-uri user:SYNTH_NOT_URI@example.test", 0],
+  ];
+
+  for (const [input, expected, redactions] of cases) {
+    assert.deepEqual(redactText(input), { text: expected, redactions });
+    assert.deepEqual(redactText(expected), { text: expected, redactions: 0 });
+  }
+});
+
+test("redacts exact bare TOKEN and SECRET assignment keys only", () => {
+  const cases = [
+    ["TOKEN=SYNTH_BARE_TOKEN", "TOKEN=[REDACTED]", 1],
+    ["secret: SYNTH_BARE_SECRET", "secret: [REDACTED]", 1],
+    ["TOKENIZER=ordinary", "TOKENIZER=ordinary", 0],
+    ["SECRETARY=ordinary", "SECRETARY=ordinary", 0],
+    ["TOKEN_COUNT=3", "TOKEN_COUNT=3", 0],
+    ["MY-TOKEN=ordinary", "MY-TOKEN=ordinary", 0],
+  ];
+
+  for (const [input, expected, redactions] of cases) {
+    assert.deepEqual(redactText(input), { text: expected, redactions });
+    assert.deepEqual(redactText(expected), { text: expected, redactions: 0 });
+  }
+});
+
+test("redacts standalone Bearer and Basic credentials without matching embedded words", () => {
+  const cases = [
+    ["Bearer SYNTH_STANDALONE_BEARER", "Bearer [REDACTED]", 1],
+    ["Basic U1lOVEhfQkFTSUM6U0VDUkVU", "Basic [REDACTED]", 1],
+    ["NotBearer SYNTH_NOT_BEARER", "NotBearer SYNTH_NOT_BEARER", 0],
+    ["Not-Bearer SYNTH_NOT_BEARER", "Not-Bearer SYNTH_NOT_BEARER", 0],
+    ["Basic", "Basic", 0],
+    ["Bearer [REDACTED]", "Bearer [REDACTED]", 0],
+  ];
+
+  for (const [input, expected, redactions] of cases) {
+    assert.deepEqual(redactText(input), { text: expected, redactions });
+    assert.deepEqual(redactText(expected), { text: expected, redactions: 0 });
+  }
+});
+
+test("normalizer CLI runs through a symlink and rejects unsafe arguments", async (t) => {
+  const directory = await makeTempDirectory(t, "normalize-session-cli-");
+  const linkedScript = path.join(directory, "normalize-session-link.mjs");
+  await symlink(SCRIPT, linkedScript);
+
+  const valid = spawnSync(
+    process.execPath,
+    [linkedScript, "--format", "claude", fixture("claude-small.jsonl")],
+    { encoding: "utf8" },
+  );
+  assert.equal(valid.status, 0, valid.stderr);
+  assert.match(valid.stdout, /^# 规范化代理会话\n/);
+
+  const invalid = spawnSync(process.execPath, [linkedScript, "--unknown"], { encoding: "utf8" });
+  assert.notEqual(invalid.status, 0);
+  assert.equal(invalid.stdout, "");
+  assert.notEqual(invalid.stderr, "");
+  assert.doesNotMatch(invalid.stderr, /SYNTH_/);
 });
 
 test("redaction is idempotent and counts only new replacements", () => {

@@ -498,12 +498,72 @@ test("redacts exact bare TOKEN and SECRET assignment keys only", () => {
   }
 });
 
-test("redacts standalone Bearer and Basic credentials without matching embedded words", () => {
+test("redacts npm and Docker authentication assignments with exact keys", () => {
+  const dockerAuth = Buffer.from("synthetic-user:synthetic-password").toString("base64");
+  const npmAuth = Buffer.from("synthetic-user:npm-password").toString("base64");
+  const cases = [
+    [
+      "//registry.example.test/:_authToken=SYNTH_NPM_AUTH_TOKEN_SECRET",
+      "//registry.example.test/:_authToken=[REDACTED]",
+      1,
+    ],
+    ["_password='SYNTH_NPM_PASSWORD_SECRET'", "_password='[REDACTED]'", 1],
+    ["authToken: SYNTH_CAMEL_AUTH_TOKEN", "authToken: [REDACTED]", 1],
+    ['{"identityToken":"SYNTH_IDENTITY_TOKEN"}', '{"identityToken":"[REDACTED]"}', 1],
+    [`_auth=${npmAuth}`, "_auth=[REDACTED]", 1],
+    [
+      `{"auths":{"registry.example.test":{"auth":"${dockerAuth}"}}}`,
+      '{"auths":{"registry.example.test":{"auth":"[REDACTED]"}}}',
+      1,
+    ],
+    ["author=SYNTH_AUTHOR_VALUE", "author=SYNTH_AUTHOR_VALUE", 0],
+    ["authentication=SYNTH_AUTHENTICATION_VALUE", "authentication=SYNTH_AUTHENTICATION_VALUE", 0],
+    ["authTokenHint=ordinary", "authTokenHint=ordinary", 0],
+    ['{"auth":"not-base64"}', '{"auth":"not-base64"}', 0],
+    ["_auth=YXV0aGVudGljYXRpb24=", "_auth=YXV0aGVudGljYXRpb24=", 0],
+  ];
+
+  for (const [input, expected, redactions] of cases) {
+    assert.deepEqual(redactText(input), { text: expected, redactions });
+    assert.deepEqual(redactText(expected), { text: expected, redactions: 0 });
+  }
+});
+
+test("reviewer authentication-config probe cannot survive normalized stdout", () => {
+  const npmToken = "SYNTH_NPM_AUTH_TOKEN_SECRET_123456789";
+  const npmPassword = "SYNTH_NPM_PASSWORD_SECRET_123456789";
+  const dockerAuth = Buffer.from("synthetic-user:synthetic-password").toString("base64");
+  const text = [
+    "Bearer short-secret",
+    `//registry.example.test/:_authToken=${npmToken}`,
+    `//registry.example.test/:_password=${npmPassword}`,
+    `{"auths":{"registry.example.test":{"auth":"${dockerAuth}"}}}`,
+  ].join("\n");
+  const input = JSON.stringify({
+    type: "response_item",
+    payload: { type: "message", role: "user", content: [{ type: "input_text", text }] },
+  });
+
+  const result = normalizeSession(input, { format: "codex" });
+
+  assert.equal(
+    result.output,
+    "# 规范化代理会话\n\n## User\nBearer [REDACTED]\n"
+      + "//registry.example.test/:_authToken=[REDACTED]\n"
+      + "//registry.example.test/:_password=[REDACTED]\n"
+      + '{"auths":{"registry.example.test":{"auth":"[REDACTED]"}}}\n',
+  );
+  assert.equal(result.stats.redactions, 4);
+  assert.doesNotMatch(result.output, /short-secret|SYNTH_NPM|synthetic-user|synthetic-password/);
+});
+
+test("redacts every standalone Bearer token68 value and only credential-shaped Basic values", () => {
   const cases = [
     ["Bearer SYNTH_STANDALONE_BEARER", "Bearer [REDACTED]", 1],
+    ["Bearer abc123", "Bearer [REDACTED]", 1],
     ["Basic U1lOVEhfQkFTSUM6U0VDUkVU", "Basic [REDACTED]", 1],
     ["Use Basic authentication", "Use Basic authentication", 0],
-    ["Bearer authentication", "Bearer authentication", 0],
+    ["Bearer authentication", "Bearer [REDACTED]", 1],
     ["NotBearer SYNTH_NOT_BEARER", "NotBearer SYNTH_NOT_BEARER", 0],
     ["Not-Bearer SYNTH_NOT_BEARER", "Not-Bearer SYNTH_NOT_BEARER", 0],
     ["Basic", "Basic", 0],

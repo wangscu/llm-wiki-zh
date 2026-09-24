@@ -111,7 +111,7 @@ function isStandaloneCredential(scheme, value) {
   if (scheme.trim().toLowerCase() === "basic") {
     return isStandaloneBasicCredential(value);
   }
-  return value.length >= 16;
+  return true;
 }
 
 export function redactText(text) {
@@ -145,6 +145,19 @@ export function redactText(text) {
       if (isRedacted(value)) {
         return match;
       }
+      const quote = doubleValue !== undefined ? "\"" : singleValue !== undefined ? "'" : "";
+      return `${prefix}${quote}[REDACTED]${quote}`;
+    },
+    state,
+  );
+  redacted = replaceMatches(
+    redacted,
+    /(?<![A-Za-z0-9_-])((['"]?)(?:api[_-]?key|password|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret[_-]?key|private[_-]?key|token|secret|_?auth[_-]?token|identity[_-]?token|_password|[A-Za-z][A-Za-z0-9_]*(?:_[A-Za-z0-9]+)*_(?:api_key|token|secret|secret_access_key|secret_key|private_key|password))(?![A-Za-z0-9_-])\2\s*[:=]\s*)(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|([^\s,;&}]+))/gi,
+    (match, prefix, _keyQuote, doubleValue, singleValue, bareValue) => {
+      const value = doubleValue ?? singleValue ?? bareValue;
+      if (isRedacted(value)) {
+        return match;
+      }
       const quote = doubleValue !== undefined ? '"' : singleValue !== undefined ? "'" : "";
       return `${prefix}${quote}[REDACTED]${quote}`;
     },
@@ -152,10 +165,10 @@ export function redactText(text) {
   );
   redacted = replaceMatches(
     redacted,
-    /(?<![A-Za-z0-9_-])((['"]?)(?:api[_-]?key|password|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret[_-]?key|private[_-]?key|token|secret|[A-Za-z][A-Za-z0-9_]*(?:_[A-Za-z0-9]+)*_(?:api_key|token|secret|secret_access_key|secret_key|private_key|password))(?![A-Za-z0-9_-])\2\s*[:=]\s*)(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|([^\s,;&}]+))/gi,
+    /(?<![A-Za-z0-9_-])((['"]?)_?auth(?![A-Za-z0-9_-])\2\s*[:=]\s*)(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|([^\s,;&}]+))/gi,
     (match, prefix, _keyQuote, doubleValue, singleValue, bareValue) => {
       const value = doubleValue ?? singleValue ?? bareValue;
-      if (isRedacted(value)) {
+      if (isRedacted(value) || !isStandaloneBasicCredential(value)) {
         return match;
       }
       const quote = doubleValue !== undefined ? '"' : singleValue !== undefined ? "'" : "";

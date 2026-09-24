@@ -238,6 +238,23 @@ test("redacts standard high-risk environment suffixes without matching ordinary 
   }
 });
 
+test("redacts bare secret and private key variables without matching ordinary names", () => {
+  const cases = [
+    ["SECRET_KEY=SYNTH_DJANGO_SECRET", "SECRET_KEY=[REDACTED]", 1],
+    ["PRIVATE_KEY=SYNTH_GENERIC_PRIVATE", "PRIVATE_KEY=[REDACTED]", 1],
+    ["secret-key=SYNTH_LOWER_HYPHEN_SECRET", "secret-key=[REDACTED]", 1],
+    ["PrIvAtE-kEy='SYNTH MIXED PRIVATE'", "PrIvAtE-kEy='[REDACTED]'", 1],
+    ["SECRET_KEY=[REDACTED]", "SECRET_KEY=[REDACTED]", 0],
+    ['private-key="[REDACTED]"', 'private-key="[REDACTED]"', 0],
+    ["DISPLAY_NAME=ordinary-value", "DISPLAY_NAME=ordinary-value", 0],
+    ["PASSWORD_HINT=not-a-password", "PASSWORD_HINT=not-a-password", 0],
+  ];
+
+  for (const [input, expected, redactions] of cases) {
+    assert.deepEqual(redactText(input), { text: expected, redactions });
+  }
+});
+
 test("redacts known provider token forms and AWS access-key IDs", () => {
   const cases = [
     ["ghp_abcdefghijklmnopqrstuvwxyz1234567890", "[REDACTED]"],

@@ -127,7 +127,7 @@ export function redactText(text) {
   );
   redacted = replaceMatches(
     redacted,
-    /(?<![A-Za-z0-9_])((['"]?)(?:api[_-]?key|password|access[_-]?token|refresh[_-]?token|client[_-]?secret|[A-Za-z][A-Za-z0-9_]*(?:_[A-Za-z0-9]+)*_(?:api_key|token|secret|secret_access_key|secret_key|private_key|password))(?![A-Za-z0-9_])\2\s*[:=]\s*)(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|([^\s,;&}]+))/gi,
+    /(?<![A-Za-z0-9_])((['"]?)(?:api[_-]?key|password|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret[_-]?key|private[_-]?key|[A-Za-z][A-Za-z0-9_]*(?:_[A-Za-z0-9]+)*_(?:api_key|token|secret|secret_access_key|secret_key|private_key|password))(?![A-Za-z0-9_])\2\s*[:=]\s*)(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|([^\s,;&}]+))/gi,
     (match, prefix, _keyQuote, doubleValue, singleValue, bareValue) => {
       const value = doubleValue ?? singleValue ?? bareValue;
       if (isRedacted(value)) {

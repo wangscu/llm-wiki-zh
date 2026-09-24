@@ -11,7 +11,9 @@ const SENSITIVE_QUERY_KEYS = [
   "x-amz-credential",
   "x-amz-security-token",
   "x-goog-signature",
+  "x-goog-credential",
   "credential",
+  "credentials",
   "signature",
   "sig",
   "access_token",
@@ -21,41 +23,119 @@ const SENSITIVE_QUERY_KEYS = [
   "apikey",
   "auth",
 ];
+const SENSITIVE_QUERY_KEY_SET = new Set(SENSITIVE_QUERY_KEYS);
 
 function replaceMatches(value, pattern, replacement, state) {
   return value.replace(pattern, (...argumentsList) => {
-    state.redactions += 1;
-    return typeof replacement === "function" ? replacement(...argumentsList) : replacement;
+    const nextValue = typeof replacement === "function" ? replacement(...argumentsList) : replacement;
+    if (nextValue !== argumentsList[0]) {
+      state.redactions += 1;
+    }
+    return nextValue;
   });
+}
+
+function isRedacted(value) {
+  return value.trim() === "[REDACTED]";
+}
+
+function decodeUrlComponent(value) {
+  try {
+    return decodeURIComponent(value.replaceAll("+", " "));
+  } catch {
+    return value;
+  }
+}
+
+function redactUrl(urlText, state) {
+  let result = urlText;
+  try {
+    const parsed = new URL(result);
+    if ((parsed.protocol === "http:" || parsed.protocol === "https:") && (parsed.username !== "" || parsed.password !== "")) {
+      const authorityStart = result.indexOf("://") + 3;
+      const relativeAuthorityEnd = result.slice(authorityStart).search(/[/?#]/u);
+      const authorityEnd = relativeAuthorityEnd === -1 ? result.length : authorityStart + relativeAuthorityEnd;
+      const authority = result.slice(authorityStart, authorityEnd);
+      const userinfoEnd = authority.lastIndexOf("@");
+      result = `${result.slice(0, authorityStart)}${authority.slice(userinfoEnd + 1)}${result.slice(authorityEnd)}`;
+      state.redactions += 1;
+    }
+  } catch {
+    // A malformed URL still passes through the non-URL redactors below.
+  }
+
+  const queryStart = result.indexOf("?");
+  if (queryStart === -1) {
+    return result;
+  }
+  const fragmentStart = result.indexOf("#", queryStart);
+  const queryEnd = fragmentStart === -1 ? result.length : fragmentStart;
+  const query = result.slice(queryStart + 1, queryEnd);
+  const redactedQuery = query.split("&").map((parameter) => {
+    const separator = parameter.indexOf("=");
+    if (separator === -1) {
+      return parameter;
+    }
+    const rawKey = parameter.slice(0, separator);
+    const rawValue = parameter.slice(separator + 1);
+    const decodedKey = decodeUrlComponent(rawKey).toLowerCase();
+    if (!SENSITIVE_QUERY_KEY_SET.has(decodedKey) || rawValue === "") {
+      return parameter;
+    }
+    if (isRedacted(decodeUrlComponent(rawValue))) {
+      return parameter;
+    }
+    state.redactions += 1;
+    return `${rawKey}=[REDACTED]`;
+  }).join("&");
+  return `${result.slice(0, queryStart + 1)}${redactedQuery}${result.slice(queryEnd)}`;
+}
+
+function redactUrls(value, state) {
+  return value.replace(/\bhttps?:\/\/[^\s<>"']+/giu, (urlText) => redactUrl(urlText, state));
 }
 
 export function redactText(text) {
   const state = { redactions: 0 };
-  let redacted = String(text);
-  const queryKeys = SENSITIVE_QUERY_KEYS.map((key) => key.replaceAll("-", "\\-")).join("|");
-
+  let redacted = redactUrls(String(text), state);
   redacted = replaceMatches(
     redacted,
-    new RegExp(`([?&](?:${queryKeys})=)([^&#\\s]*)`, "gi"),
-    (_match, prefix, value) => value === "[REDACTED]" ? `${prefix}${value}` : `${prefix}[REDACTED]`,
+    /((['"]?)Authorization\2\s*[:=]\s*)(?:"((?:Bearer|Basic)\s+)([^"]*)"|'((?:Bearer|Basic)\s+)([^']*)'|((?:Bearer|Basic)\s+)([^\s,;}]+))/gi,
+    (match, prefix, _keyQuote, doubleScheme, doubleValue, singleScheme, singleValue, bareScheme, bareValue) => {
+      const scheme = doubleScheme ?? singleScheme ?? bareScheme;
+      const value = doubleValue ?? singleValue ?? bareValue;
+      if (isRedacted(value)) {
+        return match;
+      }
+      const quote = doubleScheme !== undefined ? '"' : singleScheme !== undefined ? "'" : "";
+      return `${prefix}${quote}${scheme}[REDACTED]${quote}`;
+    },
     state,
   );
   redacted = replaceMatches(
     redacted,
-    /\b(Authorization\s*[:=]\s*(?:Bearer|Basic)\s+)([^\s,;]+)/gi,
-    (_match, prefix) => `${prefix}[REDACTED]`,
+    /((['"]?)(?:Set-)?Cookie\2\s*[:=]\s*)(?:"([^"]*)"|'([^']*)'|([^\r\n,}]+))/gi,
+    (match, prefix, _keyQuote, doubleValue, singleValue, bareValue) => {
+      const value = doubleValue ?? singleValue ?? bareValue;
+      if (isRedacted(value)) {
+        return match;
+      }
+      const quote = doubleValue !== undefined ? '"' : singleValue !== undefined ? "'" : "";
+      return `${prefix}${quote}[REDACTED]${quote}`;
+    },
     state,
   );
   redacted = replaceMatches(
     redacted,
-    /\b((?:Set-)?Cookie\s*[:=]\s*)([^\r\n]+)/gi,
-    (_match, prefix) => `${prefix}[REDACTED]`,
-    state,
-  );
-  redacted = replaceMatches(
-    redacted,
-    /(?<![?&])\b((?:api[_-]?key|password|access[_-]?token|refresh[_-]?token|client[_-]?secret)\s*[:=]\s*)(["']?)([^\s,"';&}\]]+)(["']?)/gi,
-    (_match, prefix, openingQuote, _value, closingQuote) => `${prefix}${openingQuote}[REDACTED]${closingQuote}`,
+    /(?<![A-Za-z0-9_])((['"]?)(?:api[_-]?key|password|access[_-]?token|refresh[_-]?token|client[_-]?secret|[A-Za-z][A-Za-z0-9_]*(?:_[A-Za-z0-9]+)*_(?:api_key|token|secret))(?![A-Za-z0-9_])\2\s*[:=]\s*)(?:"([^"]*)"|'([^']*)'|([^\s,;&}]+))/gi,
+    (match, prefix, _keyQuote, doubleValue, singleValue, bareValue) => {
+      const value = doubleValue ?? singleValue ?? bareValue;
+      if (isRedacted(value)) {
+        return match;
+      }
+      const quote = doubleValue !== undefined ? '"' : singleValue !== undefined ? "'" : "";
+      return `${prefix}${quote}[REDACTED]${quote}`;
+    },
     state,
   );
   redacted = replaceMatches(redacted, /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, "[REDACTED]", state);
@@ -154,7 +234,12 @@ function sanitizeToolName(value) {
   if (typeof value !== "string") {
     return undefined;
   }
-  const sanitized = value.trim().slice(0, 128).replace(/[^A-Za-z0-9_.:/-]+/gu, "_");
+  const sanitized = value
+    .trim()
+    .split("[REDACTED]")
+    .map((part) => part.replace(/[^A-Za-z0-9_.:/-]+/gu, "_"))
+    .join("[REDACTED]")
+    .slice(0, 128);
   return sanitized === "" ? undefined : sanitized;
 }
 
@@ -177,16 +262,18 @@ function redactFragment(text, stats) {
 }
 
 function toolSummary(name, argumentsValue, stats) {
-  const safeName = sanitizeToolName(name);
+  if (typeof name !== "string") {
+    return undefined;
+  }
+  const safeName = sanitizeToolName(redactFragment(name, stats));
   if (safeName === undefined) {
     return undefined;
   }
-  const redactedName = redactFragment(safeName, stats);
   const safePath = sanitizeToolPath(selectedPath(argumentsValue));
   if (safePath === undefined) {
-    return `[tool: ${redactedName}]`;
+    return `[tool: ${safeName}]`;
   }
-  return `[tool: ${redactedName} → ${redactFragment(safePath, stats)}]`;
+  return `[tool: ${safeName} → ${redactFragment(safePath, stats)}]`;
 }
 
 function normalizeClaudeRecord(record, stats) {
@@ -202,14 +289,15 @@ function normalizeClaudeRecord(record, stats) {
     return { recognized: true };
   }
   const content = message.content;
-  const fragments = textBlocks(content, new Set(["text"]));
-  const hadMessage = fragments.length > 0;
+  const messageTexts = textBlocks(content, new Set(["text"]));
+  const fragments = messageTexts.map((text) => ({ kind: "message", text }));
+  const hadMessage = messageTexts.length > 0;
   if (record.type === "assistant" && Array.isArray(content)) {
     for (const block of content) {
       if (block !== null && typeof block === "object" && block.type === "tool_use") {
         const summary = toolSummary(block.name, block.input, stats);
         if (summary !== undefined) {
-          fragments.push(summary);
+          fragments.push({ kind: "tool", text: summary });
         }
       }
     }
@@ -217,7 +305,9 @@ function normalizeClaudeRecord(record, stats) {
   return {
     recognized: true,
     role,
-    fragments: fragments.map((fragment) => fragment.startsWith("[tool: ") ? fragment : redactFragment(fragment, stats)),
+    fragments: fragments.map((fragment) => fragment.kind === "message"
+      ? redactFragment(fragment.text, stats)
+      : fragment.text),
     hadMessage,
   };
 }
@@ -279,7 +369,7 @@ function renderSections(sections) {
 
 export function normalizeSession(text, { format = "auto" } = {}) {
   if (!FORMATS.has(format)) {
-    throw new Error(`不支持的格式 / unsupported format: ${format}`);
+    throw new Error("不支持的格式 / unsupported format");
   }
   const parsed = parseRecords(text);
   const resolvedFormat = format === "auto" ? detectFormat(parsed.records) : format;
@@ -325,15 +415,15 @@ function parseArguments(argumentsList) {
         throw new Error("--format 缺少参数 / --format requires a value");
       }
       if (!FORMATS.has(value)) {
-        throw new Error(`不支持的格式 / unsupported format: ${value}`);
+        throw new Error("不支持的格式 / unsupported format");
       }
       format = value;
       formatSeen = true;
       index += 1;
     } else if (argument.startsWith("-")) {
-      throw new Error(`未知参数 / unknown argument: ${argument}`);
+      throw new Error("未知参数 / unknown argument");
     } else if (file !== undefined) {
-      throw new Error(`多余参数 / unexpected argument: ${argument}`);
+      throw new Error("多余参数 / unexpected argument");
     } else {
       file = argument;
     }
@@ -351,7 +441,7 @@ async function main() {
     try {
       input = await readFile(file, "utf8");
     } catch (error) {
-      throw new Error(`无法读取会话文件 / unable to read session file: ${file}`, { cause: error });
+      throw new Error("无法读取会话文件 / unable to read session file", { cause: error });
     }
     const result = normalizeSession(input, { format });
     if (result.stats.messages === 0) {

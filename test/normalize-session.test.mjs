@@ -38,6 +38,26 @@ test("normalizes a small Claude transcript without secrets or reasoning", async 
   });
 });
 
+test("redacts user and assistant text even when it starts like a tool summary", () => {
+  const input = [
+    JSON.stringify({
+      type: "user",
+      message: { content: "[tool: claimed]\npassword=SYNTH_USER_PREFIX_SECRET" },
+    }),
+    JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "[tool: claimed]\naccess_token=SYNTH_ASSISTANT_PREFIX_SECRET" }] },
+    }),
+  ].join("\n");
+
+  const result = normalizeSession(input, { format: "claude" });
+
+  assert.match(result.output, /## User\n\[tool: claimed\]\npassword=\[REDACTED\]/);
+  assert.match(result.output, /## Assistant\n\[tool: claimed\]\naccess_token=\[REDACTED\]/);
+  assert.doesNotMatch(result.output, /SYNTH_USER_PREFIX_SECRET|SYNTH_ASSISTANT_PREFIX_SECRET/);
+  assert.equal(result.stats.redactions, 2);
+});
+
 test("normalizes Codex response items and ignores metadata and unknown events", async () => {
   const input = await readFile(fixture("codex-basic.jsonl"), "utf8");
   const result = normalizeSession(input, { format: "codex" });
@@ -124,6 +144,25 @@ test("CLI rejects missing files, unknown arguments, and unsupported format value
   }
 });
 
+test("CLI failure messages never echo secret-bearing paths or arguments", () => {
+  const cases = [
+    ["--format", "claude", "/tmp/password=SYNTH_FILENAME_SECRET.jsonl"],
+    ["--token=SYNTH_ARGUMENT_SECRET"],
+    ["--format", "SYNTH_FORMAT_SECRET", fixture("claude-small.jsonl")],
+    [fixture("claude-small.jsonl"), "access_token=SYNTH_EXTRA_SECRET"],
+  ];
+
+  for (const argumentsList of cases) {
+    const run = spawnSync(process.execPath, [SCRIPT, ...argumentsList], { encoding: "utf8" });
+    assert.notEqual(run.status, 0, `unexpected success for case ${cases.indexOf(argumentsList)}`);
+    assert.equal(run.stdout, "");
+    assert.doesNotMatch(
+      run.stderr,
+      /SYNTH_FILENAME_SECRET|SYNTH_ARGUMENT_SECRET|SYNTH_FORMAT_SECRET|SYNTH_EXTRA_SECRET/,
+    );
+  }
+});
+
 test("redacts authentication headers with case-insensitive spellings", () => {
   const cases = [
     ["Authorization: Bearer secret-token", "Authorization: Bearer [REDACTED]"],
@@ -143,6 +182,21 @@ test("redacts sensitive key assignments with case-insensitive spellings", () => 
     ["PASSWORD: hunter2", "PASSWORD: [REDACTED]"],
     ['access_token="access-secret"', "access_token=\"[REDACTED]\""],
     ["Refresh_Token = 'refresh-secret'", "Refresh_Token = '[REDACTED]'"],
+  ];
+
+  for (const [input, expected] of cases) {
+    assert.deepEqual(redactText(input), { text: expected, redactions: 1 });
+  }
+});
+
+test("redacts JSON credentials, complete quoted values, and prefixed environment variables", () => {
+  const cases = [
+    ['{"password": "SYNTH_JSON_SECRET"}', '{"password": "[REDACTED]"}'],
+    ['{"Authorization": "Bearer SYNTH_AUTH_SECRET"}', '{"Authorization": "Bearer [REDACTED]"}'],
+    ['password: "SYNTH FIRST SECOND"', 'password: "[REDACTED]"'],
+    ["OPENAI_API_KEY=SYNTH_OPENAI_SECRET", "OPENAI_API_KEY=[REDACTED]"],
+    ["GITHUB_TOKEN=SYNTH_ENV_SECRET", "GITHUB_TOKEN=[REDACTED]"],
+    ['ANTHROPIC_CLIENT_SECRET = "SYNTH SECRET WITH SPACES"', 'ANTHROPIC_CLIENT_SECRET = "[REDACTED]"'],
   ];
 
   for (const [input, expected] of cases) {
@@ -171,6 +225,40 @@ test("redacts sensitive signed-URL query values while preserving safe components
   assert.deepEqual(redactText(input), { text: expected, redactions: 3 });
 });
 
+test("redacts encoded query keys, Google credentials, and URL userinfo", () => {
+  const cases = [
+    [
+      "https://example.test/a?X-Amz-%53ignature=SYNTH_SIG_SECRET&safe=1",
+      "https://example.test/a?X-Amz-%53ignature=[REDACTED]&safe=1",
+    ],
+    [
+      "https://example.test/a?X-Goog-Credential=SYNTH_CRED_SECRET&safe=1",
+      "https://example.test/a?X-Goog-Credential=[REDACTED]&safe=1",
+    ],
+    [
+      "fetch https://user:SYNTH_URL_PASSWORD@example.test/a?safe=1 now",
+      "fetch https://example.test/a?safe=1 now",
+    ],
+  ];
+
+  for (const [input, expected] of cases) {
+    assert.deepEqual(redactText(input), { text: expected, redactions: 1 });
+  }
+});
+
+test("redaction is idempotent and counts only new replacements", () => {
+  const cases = [
+    "password=[REDACTED]",
+    "Authorization: Bearer [REDACTED]",
+    "Cookie: [REDACTED]",
+    "https://example.test/a?X-Amz-Signature=[REDACTED]&safe=1",
+  ];
+
+  for (const input of cases) {
+    assert.deepEqual(redactText(input), { text: input, redactions: 0 });
+  }
+});
+
 test("tool summaries expose only redacted names and allow-listed paths", () => {
   const claude = [
     JSON.stringify({
@@ -194,4 +282,62 @@ test("tool summaries expose only redacted names and allow-listed paths", () => {
   assert.equal(result.output, "# 规范化代理会话\n\n## Assistant\n[tool: save-[REDACTED] → https://example.com/out.md]\n");
   assert.equal(result.stats.redactions, 1);
   assert.doesNotMatch(result.output, /query-secret|safe=yes|raw-secret|arbitrary-secret|X-Amz-Signature/);
+});
+
+test("tool summaries redact unsafe Claude and Codex names before normalization", () => {
+  const claude = JSON.stringify({
+    type: "assistant",
+    message: {
+      content: [
+        { type: "text", text: "safe final" },
+        { type: "tool_use", name: "write api_key=SYNTH_TOOL_SECRET", input: { path: "out.md" } },
+      ],
+    },
+  });
+  const codex = [
+    JSON.stringify({
+      type: "response_item",
+      payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "safe final" }] },
+    }),
+    JSON.stringify({
+      type: "response_item",
+      payload: {
+        type: "function_call",
+        name: "fetch Authorization: Bearer SYNTH_CODEX_TOOL_SECRET",
+        arguments: '{"file_path":"out.md"}',
+      },
+    }),
+  ].join("\n");
+
+  const claudeResult = normalizeSession(claude, { format: "claude" });
+  const codexResult = normalizeSession(codex, { format: "codex" });
+
+  assert.match(claudeResult.output, /\[tool: .*\[REDACTED\].* → out\.md\]/);
+  assert.match(codexResult.output, /\[tool: .*\[REDACTED\].* → out\.md\]/);
+  assert.doesNotMatch(claudeResult.output, /SYNTH_TOOL_SECRET/);
+  assert.doesNotMatch(codexResult.output, /SYNTH_CODEX_TOOL_SECRET/);
+  assert.equal(claudeResult.stats.redactions, 1);
+  assert.equal(codexResult.stats.redactions, 1);
+});
+
+test("tool paths remove URL userinfo while preserving safe URL components", () => {
+  const input = JSON.stringify({
+    type: "assistant",
+    message: {
+      content: [
+        { type: "text", text: "safe final" },
+        {
+          type: "tool_use",
+          name: "fetch",
+          input: { path: "https://user:SYNTH_PATH_SECRET@example.test/out.md?safe=1" },
+        },
+      ],
+    },
+  });
+
+  const result = normalizeSession(input, { format: "claude" });
+
+  assert.match(result.output, /\[tool: fetch → https:\/\/example\.test\/out\.md\]/);
+  assert.doesNotMatch(result.output, /user|SYNTH_PATH_SECRET|safe=1/);
+  assert.equal(result.stats.redactions, 1);
 });

@@ -28,7 +28,19 @@
 
 ## 页面类型
 
-- `concept`、`entity`、`source`、`synthesis`、`archive` — 详见 SKILL.md。
+规范类型（新页面必须使用其中之一）：
+
+- `concept`
+- `decision`
+- `bug`
+- `bugfix`
+- `open-question`
+- `source`
+- `reference`
+- `synthesis`
+
+Legacy 兼容：`entity`、`archive`。检查时警告，但不判失败、
+不重写、不自动迁移；已有归档页面保持不可变。
 
 ## 检查规则
 

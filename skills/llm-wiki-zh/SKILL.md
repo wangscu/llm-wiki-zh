@@ -1,14 +1,6 @@
 ---
 name: llm-wiki-zh
-description: |
-  在项目中构建和维护 LLM 策划的个人知识库。
-  实现 Karpathy 的 LLM Wiki 模式（gist 442a6bf555914893e9891c11519de94f）。
-  优化场景：书籍和论文研读讨论、代理会话保存、
-  AI 模型开发（代码、检查点、数据集）、软件移植文档。
-  三大命令：/wiki-ingest（录入）、/wiki-query（查询）、/wiki-lint（检查）。
-  触发词："把XX录入wiki" / "ingest into the wiki"、
-  "wiki里关于XX怎么说" / "what does the wiki say about X"、
-  "检查wiki" / "lint the wiki"，或任何应沉淀而非散落的材料积累。
+description: Use when users explicitly ask to ingest/录入 or save material into an LLM Wiki, query/查询 an existing wiki, or lint/检查 its health.
 ---
 
 # LLM Wiki
@@ -17,32 +9,44 @@ LLM 策划的知识库。用户策划来源并提问；
 LLM 负责记录整理——摘要、交叉引用、标记矛盾。
 知识在 wiki 中不断积累，而非每次查询都从原始片段重新推导。
 
-## 命令
+## 操作契约
 
-本技能支持三个命令，用户可直接输入命令关键词触发对应操作：
+Pi 保留原有 `/wiki-ingest`、`/wiki-query`、`/wiki-lint` 命令；其他宿主使用各自原生的 Skill 调用方式，不假定存在同名斜杠命令。
 
-| 命令 | 操作 | 说明 |
-|------|------|------|
-| `/wiki-ingest` | 摄取 | 将论文、会话、代码等材料录入 wiki。执行完整的 Ingest 流程：注册来源 → 阅读讨论 → 汇编页面 → 级联更新 |
-| `/wiki-query` | 查询 | 查询 wiki 中的知识。读取 index.md → 找到候选页面 → 综合回答并引用来源 |
-| `/wiki-lint` | 检查 | 检查 wiki 健康度。自动修复确定性问题（死链、孤立页面），报告启发式问题（矛盾、过期声明） |
+| 操作 | 写入契约 |
+|------|----------|
+| `ingest` | 仅在用户明确要求摄取、初始化、更新或保存材料后写入；执行注册来源 → 阅读讨论 → 汇编页面 → 级联更新。 |
+| `query` | 严格只读。可以提议 synthesis，但只有用户另行明确接受并要求保存后才进入写操作。 |
+| `lint` | 用户明确要求普通检查后，可修复确定性缺陷并按原行为写 `log.md`；启发式问题只报告。 |
+| `lint --check` / `只检查` / `只报告` | 严格只读；不得修复，不得修改索引、schema、页面或任何其他文件，也不得写 `log.md`。 |
 
-任何包含上述命令关键词、或匹配触发短语的用户输入，均会触发对应操作。
+普通总结、研究、比较、问答或“与已有知识联系起来”均保持只读，既不初始化也不修改 Wiki；只有用户另行明确要求摄取、初始化、更新或保存时才写入。
 
 ## 何时使用
 
 触发条件：
 - "把XX录入wiki" / "把这个加到我的 llm-wiki"
 - "wiki里关于XX怎么说" / "总结我的 wiki"
-- "检查wiki"
-- 一般积累：论文、会话、截图、代码、音频等
-  应该被组织起来而非散落各处的材料。
+- "检查wiki" / "只检查wiki" / "只报告wiki问题"
 
 这里的一切都是默认且模块化的——SCHEMA.md 可以覆盖
 任何不适合当前领域的内容。
 
-如果尚不存在 `llm-wiki/`，先执行**初始化**。否则在
-做任何事之前先读取 `llm-wiki/SCHEMA.md`——它会覆盖此处的默认设置。
+如果目标尚不存在 `llm-wiki/`，只有显式 ingest 才进入**初始化**；
+query 或任何 lint 只报告需要先 ingest，且不创建任何文件。
+已有 Wiki 时，在操作前读取 `llm-wiki/SCHEMA.md`——它会覆盖此处的默认设置。
+
+## 目标项目与写入边界
+
+在任何写入前按以下优先级解析一次目标项目根：
+
+1. 用户明确给定的目录；
+2. 否则当前目录最近的上级 Git 根目录；
+3. 否则当前工作目录。
+
+Wiki 固定为 `<resolved-project-root>/llm-wiki/`。绝不把 Wiki 数据写入插件目录或用户主目录下的全局插件数据目录。初始化前展示解析后的完整路径并等待用户确认。query 和任何 lint 面对未初始化目标时只报告需要先 ingest，什么也不创建。
+
+本技能采用单写者契约。读取用于规划写入的文件后，必须在实际写入前立即重新检查所有相关源文件和目标文件的内容或版本；任何目标发生变化，都停止该次写入并报告冲突。对无法确定来源的人工或并发改动，绝不静默合并或覆盖。
 
 ## 架构
 
@@ -93,7 +97,7 @@ topic 按*主题*组织已汇编页面。一个来源可以
 
 ## 页面类型
 
-每个页面使用且仅使用一种类型：
+新页面使用且仅使用以下八种规范类型之一：
 
 - `concept` — 某事物是什么（架构、数学、机制）
 - `decision` — 为何选择 X 而非 Y（对比表、替代方案、证据）
@@ -102,6 +106,9 @@ topic 按*主题*组织已汇编页面。一个来源可以
 - `source` — 会话或文档摘要（简洁指针，非深度内容）
 - `reference` — 命令、配置、API 文档（查询表，非叙述）
 - `synthesis` — 归档的查询答案（引用 wiki 页面，非原始来源）
+
+`entity` 和 `archive` 仅作为 legacy 兼容值：lint 对它们发出警告，
+但不判失败、不重写、不自动迁移。已存在的归档页面保持不可变。
 
 ## 页面质量启发规则
 
@@ -127,9 +134,22 @@ topic 按*主题*组织已汇编页面。一个来源可以
 
 ### 1. 注册来源
 
+为实际注册的内容计算 `sha256` 摘要，并把摘要与规范来源身份一起记录。
+规范身份按来源确定：
+
+- 项目内文件：相对目标项目根的规范化路径；
+- 项目外文件：规范化绝对路径；
+- URL：用户明确提供、去除凭据（包括签名查询参数）后的 URL；若不存在可持久化的无凭据 URL，改用稳定声明标签；
+- 粘贴文本或当前可见会话材料：稳定且明确声明的标签或标识符。
+
+身份或索引中不得出现 Cookie、Authorization header、签名查询凭据或其他秘密。
+每个注册版本都必须对应不可变 artifact：稳定且版本固定的位置可作为引用，
+否则在 `raw-sources/` 中保存该版本的只读副本。同一身份和同一摘要是严格 no-op：报告内容已存在，任何文件都不写，
+包括不追加日志。同一身份但摘要变化时，追加一个新来源版本和新的不可变
+原始材料，并链接到上一版本；绝不编辑旧来源。
+
 **引用 vs 副本：**
-- 稳定位置（项目内文件、外部文件、URL）→ **引用**。
-  项目内路径用相对路径；项目外用绝对路径。
+- 稳定位置（项目内文件、外部文件、明确 URL）→ **引用**。
 - 无规范位置（粘贴文本、临时对话记录）→ **副本**，复制到
   `raw-sources/<bucket>/YYYY-MM-DD-slug.md`，使用
   `references/source.template.md` 模板。原文照录，去除格式噪音，
@@ -138,14 +158,23 @@ topic 按*主题*组织已汇编页面。一个来源可以
 Slug 规则（副本）：kebab-case，≤60 字符。如已知发布日期则加
 `YYYY-MM-DD-` 前缀；否则省略并将 `published` 设为 `Unknown`。
 
-追加到 `raw-sources/index.md` 的 `## <bucket>` 下。新建 bucket 需要
-用户批准 + SCHEMA 更新。格式：
+追加到 `raw-sources/index.md` 的 `## <bucket>` 下，并记录规范身份、
+`sha256`、版本关系和实际注册内容的位置。新建 bucket 需要用户批准 +
+SCHEMA 更新。格式：
 
     ## papers
-    - **Title** — URL_or_path — collected YYYY-MM-DD → [page](../topic/page.md)
+    - **Title** — identity: URL_or_path — sha256: DIGEST — collected YYYY-MM-DD → [page](../topic/page.md)
 
 `→` 箭头列出此来源贡献到的页面（在摄取结束时填写；
 一个来源可产生多个链接）。
+
+### 输入与安全预检
+
+- URL 摄取只访问用户明确给出的地址；不搜索、不爬取链接页面、不收集遥测。
+- 访问需登录或其他私有材料前先确认。不得持久化凭据、Cookie、认证头或临时签名 URL。
+- 单份文本超过约 1 MiB、一次超过 20 个文件，或预计会超出宿主上下文时，先做只读预检并提出分批方案；用户确认前不写入。
+- 二进制输入必须先有可审计的文本伴生文件，之后才能摄取。
+- 任何脱敏都在 provenance 或审计备注中披露；不存在静默关闭脱敏的全局模式。
 
 ### 2. 阅读和讨论
 
@@ -198,18 +227,33 @@ Slug 规则（副本）：kebab-case，≤60 字符。如已知发布日期则�
 
 ### 特殊来源类型
 
-**会话。** Pi 会话是 JSONL 树结构——参见
-`references/pi-session-recipe.md`。**关键：** 会话不是
-时间线流。它们包含分叉（恢复的对话、子代理生成）、
-自定义事件（获取失败、速率限制、错误）以及
-助手仅通过工具调用产生产物而无文本回复的分支。
-你必须在阅读任何内容之前运行树分析（配方中的第 0 步）。
-对于 Claude Code（`~/.claude/projects/<sanitized-cwd>/*.jsonl`）、
-Gemini CLI（`~/.gemini/tmp/<project>/chats/*.json`）和 opencode
-（`~/.local/share/opencode/opencode.db` SQLite），参见
-`references/agent-session-recipe.md`——仅在真正扫描
-这些工具的对话记录时才加载，不要在技能常规加载时加载。
-将每个被引用的来源作为独立条目提取；优先处理底层来源而非会话。
+**会话。** 按明确来源渐进路由，只在需要时读取对应配方：
+
+无论宿主为何，只保留明确识别的用户文本、助手最终文本和安全工具名称／产物路径摘要；绝不输出或持久化 reasoning、raw tool arguments、完整工具结果或认证材料。
+
+- 当前对话：仅使用当前上下文中可见的内容，以及已经回传到该上下文的子代理结果；无需也不得从磁盘发现会话。
+- 用户明确提供的 Pi transcript：参见 `references/pi-session-recipe.md`。
+- 用户明确提供的 Claude Code、Gemini CLI 或 opencode artifact：参见 `references/agent-session-recipe.md`。
+- 用户明确提供的 Codex transcript：参见 `references/codex-session-recipe.md`。
+
+对于明确提供的 Claude 或 Codex JSONL 文件，从已安装 Skill 根目录运行：
+
+```bash
+node scripts/normalize-session.mjs --format claude /absolute/path/to/session.jsonl
+node scripts/normalize-session.mjs --format codex /absolute/path/to/session.jsonl
+```
+
+脚本在 stdout 输出供审阅的 Markdown，在 stderr 报告 unknown、malformed、
+redactions 等统计；非零退出表示安全失败。先审阅输出，再决定是否摄取。
+若 Node 不可用或解析拒绝该 artifact，降级为保守手工读取：只提取明确识别的
+用户文本与助手最终文本，跳过 reasoning、工具 payload 和未知记录，脱敏秘密，
+并披露局限；不得猜测字段或伪造对话。
+
+不得扫描宿主存储来猜“当前会话”，也不得声称可以访问隐藏的子代理轨迹。
+只有用户明确提供子代理 transcript 时才处理；缺少 `.meta.json` 不得阻止读取。
+provenance 必须记录明确 artifact 路径或标识符、请求格式、normalizer 的
+unknown/malformed/redactions 统计，以及提取限制。将每个被引用的底层来源作为
+独立条目提取，并优先处理底层来源而非会话摘要。
 
 **图表 / 截图 / 音频 / MIDI / 检查点。** 相同模式：
 每种类型一个 bucket（`figures/`、`audio/` 等），稳定则引用，临时的
@@ -227,23 +271,29 @@ Gemini CLI（`~/.gemini/tmp/<project>/chats/*.json`）和 opencode
 ## 查询
 
 读取 `index.md`，找到候选页面，读取页面，综合并附引用。
-优先使用 wiki 而非训练数据；若覆盖不全请说明。
+优先使用 wiki 而非训练数据；若覆盖不全请说明。查询全过程严格只读。
 
 **归档：** 如果答案综合了 ≥2 个 wiki 页面，或发现了尚未记录的
 新联系，主动提议将其归档为 `type: synthesis`
 页面。综合页面引用它们的源 wiki 页面（而非原始来源），
 并在"综合"栏目下编入索引。这可以防止好的答案
-消失在聊天历史中。
+消失在聊天历史中。提议本身不授权写入；只有用户另行明确接受并要求保存，
+才启动独立写操作，并重新执行目标解析和单写者检查。
 
-**存档**（按需）：综合页面使用 `type: synthesis` 或
-`archive`，`sources:` 列出引用的 wiki 页面，更新 `index.md` 标注
-`[Archived]`，追加到 `log.md`。
+**保存已接受的综合**（按需）：新页面只能使用 `type: synthesis`，
+`sources:` 列出引用的 wiki 页面，更新 `index.md`，追加到 `log.md`。
+绝不创建新的 `archive` 页面，也不修改已经归档的页面。
 
 ## 检查
 
-自动修复确定性问题：索引/文件系统同步、死链、
-参见双向性、原始引用有效性、frontmatter
-类型一致性（类型必须来自规范列表）。
+先根据用户请求选择且只选择一种模式：
+
+- **普通 lint：** 在用户明确要求普通检查后，修复确定性问题：
+  索引/文件系统同步、死链、参见双向性、原始引用有效性、frontmatter
+  类型一致性。对 `entity`、`archive` 仅发 legacy 警告，绝不失败、重写或迁移。
+- **check-only：** 当请求含 `--check`、`只检查` 或 `只报告` 时，
+  运行与普通 lint 相同的确定性和启发式检查并报告结果，但不修复、不改
+  index/schema/page/raw source 或任何其他文件，也不创建或修改 `log.md`。
 
 向用户报告启发式问题：
 - **矛盾：** 在同主题页面间 grep 反义词对
@@ -256,7 +306,7 @@ Gemini CLI（`~/.gemini/tmp/<project>/chats/*.json`）和 opencode
 - **概念缺口：** 参见中提到但缺乏独立页面的概念。
 - **索引冗余：** 索引条目对应的文件已不存在。
 
-所有发现发布到 `log.md`。
+普通 lint 将发现发布到 `log.md`；check-only 只在回复中报告。
 
 ## Schema 协同演化
 
@@ -271,8 +321,9 @@ Gemini CLI（`~/.gemini/tmp/<project>/chats/*.json`）和 opencode
 
 ## 规则
 
-- 注册后绝不可编辑 `raw-sources/`。注册表仅追加。
-- 创建后绝不可编辑归档页面。
+- 注册后绝不可编辑已有 `raw-sources/` artifact；新内容只能形成新版本。
+  注册表仅追加，派生页面仅做精准合并。
+- 创建后绝不可编辑归档的 synthesis 或 legacy archive 页面。
 - 薄弱或推测性来源应明确标注为如此；不可
   给予其与更强来源同等的权重。
 - 对于重要来源，先写来源摘要页面，再

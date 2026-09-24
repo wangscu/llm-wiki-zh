@@ -29,8 +29,9 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("wiki-lint", {
     description:
       "检查 LLM Wiki 知识库的健康度（孤立页面、过期内容等）",
-    async handler(_args, _ctx) {
-      pi.sendUserMessage("检查wiki");
+    async handler(args, _ctx) {
+      const checkOnly = /(^|\s)--check(?:\s|$)/.test(args ?? "") || /只检查|只报告/.test(args ?? "");
+      pi.sendUserMessage(checkOnly ? "只检查wiki，不要修改任何文件" : "检查wiki");
     },
   });
 }

@@ -1,7 +1,7 @@
 {
   "name": "@micuintus/llm-wiki",
   "version": "1.5.0",
-  "description": "Karpathy 的 LLM Wiki 模式：面向 Pi 的极简、跨代理技能",
+  "description": "面向 Pi、Codex CLI 和 Claude Code 的中文 LLM Wiki 技能 | Chinese LLM Wiki Skill for Pi, Codex CLI, and Claude Code",
   "keywords": [
     "pi-package",
     "llm-wiki",
@@ -24,10 +24,20 @@
   },
   "files": [
     "llm-wiki-zh",
+    "skills",
+    "plugin.json",
+    ".codex-plugin",
+    ".claude-plugin",
+    ".agents",
+    "scripts",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
+    "sync:skill": "node scripts/sync-skill.mjs",
+    "check:skill": "node scripts/sync-skill.mjs --check",
+    "validate:package": "node scripts/validate-package.mjs",
+    "validate": "npm run check:skill && npm run validate:package && npm test",
     "test": "node --experimental-strip-types --test"
   },
   "peerDependencies": {

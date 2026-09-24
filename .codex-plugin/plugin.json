@@ -8,6 +8,9 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "LLM Wiki Zh",
+    "shortDescription": "中文 LLM Wiki / Chinese LLM Wiki",
+    "longDescription": "构建和维护中文 LLM Wiki / Build and maintain a Chinese LLM Wiki",
+    "developerName": "wangscu",
     "category": "Productivity",
     "capabilities": ["Read", "Write"],
     "defaultPrompt": "Query an existing Wiki before proposing changes."

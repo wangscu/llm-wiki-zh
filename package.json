@@ -36,6 +36,8 @@
   "scripts": {
     "sync:skill": "node scripts/sync-skill.mjs",
     "check:skill": "node scripts/sync-skill.mjs --check",
+    "validate:package": "node scripts/validate-package.mjs",
+    "validate": "npm run check:skill && npm run validate:package && npm test",
     "test": "node --experimental-strip-types --test"
   },
   "peerDependencies": {

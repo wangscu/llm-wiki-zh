@@ -3,6 +3,9 @@
   "owner": {
     "name": "wangscu"
   },
+  "metadata": {
+    "description": "构建和维护中文 LLM Wiki / Build and maintain a Chinese LLM Wiki"
+  },
   "plugins": [
     {
       "name": "llm-wiki-zh",

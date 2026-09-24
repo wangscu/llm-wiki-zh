@@ -1,7 +1,7 @@
 {
   "name": "@micuintus/llm-wiki",
   "version": "1.5.0",
-  "description": "面向 Pi、Codex CLI 和 Claude Code 的中文 LLM Wiki 技能 / Chinese LLM Wiki Skill for Pi, Codex CLI, and Claude Code",
+  "description": "面向 Pi、Codex CLI 和 Claude Code 的中文 LLM Wiki 技能 | Chinese LLM Wiki Skill for Pi, Codex CLI, and Claude Code",
   "keywords": [
     "pi-package",
     "llm-wiki",
@@ -11,7 +11,8 @@
     "中文",
     "大语言模型",
     "知识库",
-    "代理技能"
+    "代理技能",
+    "minimal"
   ],
   "homepage": "https://github.com/wangscu/llm-wiki-zh",
   "bugs": {
@@ -24,6 +25,7 @@
   },
   "files": [
     "llm-wiki-zh",
+    "llm-wiki",
     "skills",
     "plugin.json",
     ".codex-plugin",

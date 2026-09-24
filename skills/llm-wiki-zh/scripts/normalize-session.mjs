@@ -100,7 +100,7 @@ export function redactText(text) {
   let redacted = redactUrls(String(text), state);
   redacted = replaceMatches(
     redacted,
-    /((['"]?)Authorization\2\s*[:=]\s*)(?:"((?:Bearer|Basic)\s+)([^"]*)"|'((?:Bearer|Basic)\s+)([^']*)'|((?:Bearer|Basic)\s+)([^\s,;}]+))/gi,
+    /((['"]?)Authorization\2\s*[:=]\s*)(?:"((?:Bearer|Basic)\s+)((?:\\.|[^"\\])*)"|'((?:Bearer|Basic)\s+)((?:\\.|[^'\\])*)'|((?:Bearer|Basic)\s+)([^\s,;}]+))/gi,
     (match, prefix, _keyQuote, doubleScheme, doubleValue, singleScheme, singleValue, bareScheme, bareValue) => {
       const scheme = doubleScheme ?? singleScheme ?? bareScheme;
       const value = doubleValue ?? singleValue ?? bareValue;
@@ -114,7 +114,7 @@ export function redactText(text) {
   );
   redacted = replaceMatches(
     redacted,
-    /((['"]?)(?:Set-)?Cookie\2\s*[:=]\s*)(?:"([^"]*)"|'([^']*)'|([^\r\n,}]+))/gi,
+    /((['"]?)(?:Set-)?Cookie\2\s*[:=]\s*)(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|([^\r\n,}]+))/gi,
     (match, prefix, _keyQuote, doubleValue, singleValue, bareValue) => {
       const value = doubleValue ?? singleValue ?? bareValue;
       if (isRedacted(value)) {
@@ -127,7 +127,7 @@ export function redactText(text) {
   );
   redacted = replaceMatches(
     redacted,
-    /(?<![A-Za-z0-9_])((['"]?)(?:api[_-]?key|password|access[_-]?token|refresh[_-]?token|client[_-]?secret|[A-Za-z][A-Za-z0-9_]*(?:_[A-Za-z0-9]+)*_(?:api_key|token|secret))(?![A-Za-z0-9_])\2\s*[:=]\s*)(?:"([^"]*)"|'([^']*)'|([^\s,;&}]+))/gi,
+    /(?<![A-Za-z0-9_])((['"]?)(?:api[_-]?key|password|access[_-]?token|refresh[_-]?token|client[_-]?secret|[A-Za-z][A-Za-z0-9_]*(?:_[A-Za-z0-9]+)*_(?:api_key|token|secret|secret_access_key|secret_key|private_key|password))(?![A-Za-z0-9_])\2\s*[:=]\s*)(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|([^\s,;&}]+))/gi,
     (match, prefix, _keyQuote, doubleValue, singleValue, bareValue) => {
       const value = doubleValue ?? singleValue ?? bareValue;
       if (isRedacted(value)) {
@@ -249,7 +249,9 @@ function sanitizeToolPath(value) {
   }
   const withoutQuery = value.split(/[?#]/u, 1)[0];
   const sanitized = withoutQuery
-    .replace(/[\u0000-\u001f\u007f\[\]]/gu, "_")
+    .split("[REDACTED]")
+    .map((part) => part.replace(/[\u0000-\u001f\u007f\[\]]/gu, "_"))
+    .join("[REDACTED]")
     .trim()
     .slice(0, 1024);
   return sanitized === "" ? undefined : sanitized;
@@ -269,7 +271,10 @@ function toolSummary(name, argumentsValue, stats) {
   if (safeName === undefined) {
     return undefined;
   }
-  const safePath = sanitizeToolPath(selectedPath(argumentsValue));
+  const rawPath = selectedPath(argumentsValue);
+  const safePath = rawPath === undefined
+    ? undefined
+    : sanitizeToolPath(redactFragment(rawPath, stats));
   if (safePath === undefined) {
     return `[tool: ${safeName}]`;
   }

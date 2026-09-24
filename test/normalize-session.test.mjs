@@ -204,6 +204,40 @@ test("redacts JSON credentials, complete quoted values, and prefixed environment
   }
 });
 
+test("redacts complete escape-aware quoted assignment and header values", () => {
+  const cases = [
+    [
+      '{"password":"SYNTH_ESCAPED_BEFORE\\"SYNTH_ESCAPED_AFTER"}',
+      '{"password":"[REDACTED]"}',
+    ],
+    [
+      '{"Authorization":"Bearer SYNTH_AUTH_BEFORE\\"SYNTH_AUTH_AFTER"}',
+      '{"Authorization":"Bearer [REDACTED]"}',
+    ],
+    [
+      '{"password":"SYNTH_BACKSLASH_BEFORE\\\\SYNTH_BACKSLASH_AFTER"}',
+      '{"password":"[REDACTED]"}',
+    ],
+  ];
+
+  for (const [input, expected] of cases) {
+    assert.deepEqual(redactText(input), { text: expected, redactions: 1 });
+  }
+});
+
+test("redacts standard high-risk environment suffixes without matching ordinary variables", () => {
+  const cases = [
+    ["AWS_SECRET_ACCESS_KEY=SYNTH_AWS_SECRET_VALUE", "AWS_SECRET_ACCESS_KEY=[REDACTED]", 1],
+    ['DEPLOY_PRIVATE_KEY="SYNTH PRIVATE KEY"', 'DEPLOY_PRIVATE_KEY="[REDACTED]"', 1],
+    ["DATABASE_PASSWORD=SYNTH_DATABASE_SECRET", "DATABASE_PASSWORD=[REDACTED]", 1],
+    ["DISPLAY_NAME=ordinary-value", "DISPLAY_NAME=ordinary-value", 0],
+  ];
+
+  for (const [input, expected, redactions] of cases) {
+    assert.deepEqual(redactText(input), { text: expected, redactions });
+  }
+});
+
 test("redacts known provider token forms and AWS access-key IDs", () => {
   const cases = [
     ["ghp_abcdefghijklmnopqrstuvwxyz1234567890", "[REDACTED]"],
@@ -249,8 +283,11 @@ test("redacts encoded query keys, Google credentials, and URL userinfo", () => {
 test("redaction is idempotent and counts only new replacements", () => {
   const cases = [
     "password=[REDACTED]",
+    '{"password":"[REDACTED]"}',
     "Authorization: Bearer [REDACTED]",
+    '{"Authorization":"Bearer [REDACTED]"}',
     "Cookie: [REDACTED]",
+    "AWS_SECRET_ACCESS_KEY=[REDACTED]",
     "https://example.test/a?X-Amz-Signature=[REDACTED]&safe=1",
   ];
 
@@ -280,7 +317,7 @@ test("tool summaries expose only redacted names and allow-listed paths", () => {
   const result = normalizeSession(claude, { format: "claude" });
 
   assert.equal(result.output, "# 规范化代理会话\n\n## Assistant\n[tool: save-[REDACTED] → https://example.com/out.md]\n");
-  assert.equal(result.stats.redactions, 1);
+  assert.equal(result.stats.redactions, 2);
   assert.doesNotMatch(result.output, /query-secret|safe=yes|raw-secret|arbitrary-secret|X-Amz-Signature/);
 });
 
@@ -340,4 +377,40 @@ test("tool paths remove URL userinfo while preserving safe URL components", () =
   assert.match(result.output, /\[tool: fetch → https:\/\/example\.test\/out\.md\]/);
   assert.doesNotMatch(result.output, /user|SYNTH_PATH_SECRET|safe=1/);
   assert.equal(result.stats.redactions, 1);
+});
+
+test("tool paths redact raw Claude and Codex values before control-character sanitization", () => {
+  const claude = JSON.stringify({
+    type: "assistant",
+    message: {
+      content: [
+        { type: "text", text: "safe final" },
+        { type: "tool_use", name: "write", input: { path: "password\n=SYNTH_PATH_ORDER_SECRET" } },
+      ],
+    },
+  });
+  const codex = [
+    JSON.stringify({
+      type: "response_item",
+      payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "safe final" }] },
+    }),
+    JSON.stringify({
+      type: "response_item",
+      payload: {
+        type: "function_call",
+        name: "write",
+        arguments: JSON.stringify({ file_path: "password\t=SYNTH_CODEX_PATH_ORDER_SECRET" }),
+      },
+    }),
+  ].join("\n");
+
+  const claudeResult = normalizeSession(claude, { format: "claude" });
+  const codexResult = normalizeSession(codex, { format: "codex" });
+
+  assert.match(claudeResult.output, /\[tool: write → password_=\[REDACTED\]\]/);
+  assert.match(codexResult.output, /\[tool: write → password_=\[REDACTED\]\]/);
+  assert.doesNotMatch(claudeResult.output, /SYNTH_PATH_ORDER_SECRET/);
+  assert.doesNotMatch(codexResult.output, /SYNTH_CODEX_PATH_ORDER_SECRET/);
+  assert.equal(claudeResult.stats.redactions, 1);
+  assert.equal(codexResult.stats.redactions, 1);
 });

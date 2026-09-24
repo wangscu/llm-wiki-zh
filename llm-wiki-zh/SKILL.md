@@ -52,9 +52,9 @@ Wiki 固定为 `<resolved-project-root>/llm-wiki/`。绝不把 Wiki 数据写入
 
 三个层次：
 
-- **原始来源** — `llm-wiki/raw-sources/`。不可变。要么是*副本*
-  （无规范位置 → `raw-sources/<bucket>/`），要么是*引用*
-  （稳定位置 → 仅在 `raw-sources/index.md` 中记录）。
+- **原始来源** — `llm-wiki/raw-sources/`。不可变。可变 locator 按 digest
+  保存 snapshot；只有内容和版本都不可变的 locator 才只在
+  `raw-sources/index.md` 中登记引用。
 - **Wiki** — `llm-wiki/<topic>/<page>.md`，由 LLM 汇编。顶层另有
   `index.md`（目录）和 `log.md`（操作日志）。
 - **Schema** — `llm-wiki/SCHEMA.md`。各项目的约定规范。LLM
@@ -143,27 +143,33 @@ topic 按*主题*组织已汇编页面。一个来源可以
 - 粘贴文本或当前可见会话材料：稳定且明确声明的标签或标识符。
 
 身份或索引中不得出现 Cookie、Authorization header、签名查询凭据或其他秘密。
-每个注册版本都必须对应不可变 artifact：稳定且版本固定的位置可作为引用，
-否则在 `raw-sources/` 中保存该版本的只读副本。同一身份和同一摘要是严格 no-op：报告内容已存在，任何文件都不写，
+每个注册版本都必须对应不可变 artifact。只有 content-addressed、commit-pinned、
+带不可变版本 ID，或明确由外部系统保证 immutable 的 locator 可只保存引用；
+否则在 `raw-sources/` 中保存该 digest 对应的只读 snapshot。
+同一身份和同一摘要是严格 no-op：报告内容已存在，任何文件都不写，
 包括不追加日志。同一身份但摘要变化时，追加一个新来源版本和新的不可变
 原始材料，并链接到上一版本；绝不编辑旧来源。
 
 **引用 vs 副本：**
-- 稳定位置（项目内文件、外部文件、明确 URL）→ **引用**。
-- 无规范位置（粘贴文本、临时对话记录）→ **副本**，复制到
-  `raw-sources/<bucket>/YYYY-MM-DD-slug.md`，使用
+- **不可变引用：** content-addressed locator、固定 Git commit 下的路径、
+  带不可变版本 ID 的 artifact，或外部系统明确保证不可变的版本 → 记录引用。
+- **不可变 snapshot：** 普通工作区路径和可变外部文件必须按 digest 保存 snapshot；
+  `latest`、普通 URL 及其他可能改变的 URL 也必须按 digest 保存 snapshot；
+  粘贴文本和临时对话记录同样保存 snapshot。复制到
+  `raw-sources/<bucket>/YYYY-MM-DD-slug-vN-<sha256-prefix>.md`，使用
   `references/source.template.md` 模板。原文照录，去除格式噪音，
   保留原观点。
 
-Slug 规则（副本）：kebab-case，≤60 字符。如已知发布日期则加
+Slug 规则（snapshot）：kebab-case，≤60 字符。如已知发布日期则加
 `YYYY-MM-DD-` 前缀；否则省略并将 `published` 设为 `Unknown`。
+文件名包含来源版本号与 digest 前缀，确保每个版本使用不同路径。
 
 追加到 `raw-sources/index.md` 的 `## <bucket>` 下，并记录规范身份、
 `sha256`、版本关系和实际注册内容的位置。新建 bucket 需要用户批准 +
 SCHEMA 更新。格式：
 
     ## papers
-    - **Title** — identity: URL_or_path — sha256: DIGEST — collected YYYY-MM-DD → [page](../topic/page.md)
+    - **Title** — identity: URL_or_path — sha256: DIGEST — version: N — previous_version: PRIOR_OR_NONE — artifact: SNAPSHOT_OR_IMMUTABLE_LOCATOR — collected YYYY-MM-DD → [page](../topic/page.md)
 
 `→` 箭头列出此来源贡献到的页面（在摄取结束时填写；
 一个来源可产生多个链接）。
@@ -256,8 +262,8 @@ unknown/malformed/redactions 统计，以及提取限制。将每个被引用的
 独立条目提取，并优先处理底层来源而非会话摘要。
 
 **图表 / 截图 / 音频 / MIDI / 检查点。** 相同模式：
-每种类型一个 bucket（`figures/`、`audio/` 等），稳定则引用，临时的
-则复制。始终配一个伴生 `.md` 描述文件（原文
+每种类型一个 bucket（`figures/`、`audio/` 等）。仅不可变版本 locator 可引用；
+普通路径或可变 locator 按 digest 保存 snapshot。始终配一个伴生 `.md` 描述文件（原文
 + 1-3 句话）——这是可搜索的句柄。引用 `.md` 文件，
 而非二进制文件。
 

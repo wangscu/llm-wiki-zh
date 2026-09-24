@@ -1,120 +1,99 @@
 # Pi 会话配方
 
-如何遍历和摄取 Pi 代理会话。LLM Wiki 摄取工作流中
-会话步骤的延迟加载参考文档。
+用于安全摄取用户明确提供的单一 transcript。Pi JSONL 是带 `parentId` 的树，
+不是可按时间戳直接线性化的消息流；恢复操作和分支可能使同一父节点拥有多个
+子节点。
 
-## 目录布局
+## 明确文件与能力边界
 
-Pi 将会话存储在 `~/.pi/agent/sessions/--<encoded-cwd>--/`，其中
-`<encoded-cwd>` 是绝对工作目录路径，将 `/` 替换为 `-`。
-同一目录下的多个 JSONL 文件 = 同一项目的恢复会话。
+- 要求用户提供一个明确的 transcript 绝对路径；不得扫描 Pi 存储目录猜测 current session。
+- 不承诺访问隐藏分支或隐藏 agent 轨迹。只有明确文件中可见的记录才在范围内。
+- 原 JSONL 是不稳定证据 artifact，不是稳定 API；未知或无法确认的记录保守跳过并披露。
+- 只读原文件，不修改它。任何终端输出或 Wiki 持久化之前都必须先脱敏。
 
-## 第 0 步：分叉检测（必须执行）
+## 第 0 步：只做结构检查
 
-在阅读任何内容之前，检查分叉。分叉意味着恢复的会话、
-子代理生成或重复的用户消息——每个分支可能包含不同的
-主题内容。
-
-```bash
-SESSION="$HOME/.pi/agent/sessions/--<encoded-cwd>--/<file>.jsonl"
-
-# 1. 分叉（拥有 >1 个子节点的父节点）——绝不跳过
-jq -r 'select(.type=="message") | .parentId' "$SESSION" | sort | uniq -c | awk '$1>1 {print}'
-
-# 2. 带时间戳的用户消息——检测跨日会话
-jq -r 'select(.type=="message" and .message.role=="user") |
-       "\(.timestamp[0:19]): \((.message.content | if type=="string" then . else (map(.text) | join("")) end) | .[0:100])"' "$SESSION"
-```
-
-**如果存在分叉，逐分支阅读。** 不要按时间戳排序后线性
-阅读。提取所有带 `parentId` 元数据的助手消息。
-
-## 第 1 步：提取实质性内容
+如果有 `jq`，可对明确文件只输出聚合结构统计。下列命令不输出消息内容、
+事件 payload、URL、错误详情或工具参数／结果：
 
 ```bash
-# 所有助手文本和思考块（跨所有分支）
-jq -r 'select(.type=="message" and .message.role=="assistant") |
-       "\n--- parent=\(.parentId) ts=\(.timestamp) ---\n" +
-       (.message.content | if type=="string" then . else
-         (map(select(.type=="text" or .type=="thinking") | "[\(.type)] \(.text)") | join("\n")) end)' "$SESSION"
+PI_TRANSCRIPT=/absolute/path/to/pi-session.jsonl
+jq -s '{
+  messages: ([.[] | select(.type == "message")] | length),
+  roots: ([.[] | select(.type == "message" and .parentId == null)] | length),
+  branch_points: ([.[] | select(.type == "message") | .parentId]
+    | group_by(.) | map(select(length > 1)) | length)
+}' "$PI_TRANSCRIPT"
 ```
 
-**关键规则：** 如果助手消息仅包含 `thinking: null` 且没有
-`text`，说明助手通过 `write`/`edit` 工具调用产出了产物。检查
-`custom` 事件（第 2 步）以了解产出了什么。
+`branch_points > 0` 表示必须按 `parentId` 关系区分分支，不能按时间戳拼成一条
+对话。结构解析失败时停止自动处理并报告；不要退回宽泛打印记录的命令。
 
-## 第 2 步：从自定义事件中提取失败和值得注意的事件
+缺少 `jq` 时安全降级：只读打开用户明确提供的文件，保守识别树关系；如果
+无法可靠确认父子关系，则披露“分支结构未验证”，只处理能够明确识别的内容。
 
-```bash
-# 获取失败
-echo "=== 获取失败 ==="
-jq -r 'select(.type=="custom" and .data.type=="fetch_content" and .data.error) |
-       "FAIL \(.data.urls[0]): \(.data.error)"' "$SESSION"
+## 第 1 步：允许的内容
 
-# 速率限制 / 错误
-echo "=== 错误 ==="
-jq -r 'select(.type=="custom" and (.data.type=="error" or .data.type=="rate_limit")) |
-       "\(.data.type): \(.data | tostring)"' "$SESSION"
+逐分支处理时只允许以下输出：
 
-# 工具使用统计
-echo "=== 工具 ==="
-jq -r 'select(.type=="custom" and .data.type=="tool_execution_end") | .data.toolName' "$SESSION" | sort | uniq -c | sort -rn
+1. `message.role == user` 的明确文本内容；
+2. `message.role == assistant` 的最终 `text` 内容；
+3. allowlist 中的安全工具名称，以及结构化 `path`、`file_path` 或 `filePath`
+   产物路径摘要。工具 allowlist 限于产生明确文件的 `write`、`edit`。
 
-# 通过 write/edit 产出的产物
-echo "=== 产物 ==="
-jq -r 'select(.type=="custom" and .data.type=="tool_execution_end" and
-       (.data.toolName=="write" or .data.toolName=="edit")) |
-       "\(.data.toolName): \(.data.result // .data.args // \"unknown\")"' "$SESSION"
-```
+助手最终文本不包括 thinking、reasoning 或其他私有块。工具记录不读取或输出
+raw arguments、raw result、完整工具返回值、错误 payload、查询、URL 或未知字段。
+不要递归遍历任意字符串来猜文件、来源或产物。
 
-**在会话页面中记录以下内容：**
-- 获取失败（认证、429、登录墙）
-- 速率限制或中断
-- 通过工具调用产生的产物
+## 第 2 步：先脱敏，再输出
 
-## 第 3 步：提取引用的来源
+在任何终端显示、审阅文本或 Wiki 写入前，对允许内容执行脱敏：
 
-```bash
-# 来自 web_search + fetch_content 的 URL
-jq -r 'select(.type=="custom" and .data.type=="web_search") | .data.queries[]?' "$SESSION"
-jq -r 'select(.type=="custom" and .data.type=="fetch_content") |
-       (.data.urls[]?, .data.queries[]?)' "$SESSION" | sort -u
+- 删除 Authorization、Cookie、密码、token、API key、私钥和环境凭据；
+- URL 或路径只保留无凭据的安全部分，移除 userinfo、query 和 fragment；
+- 工具名称只接受 allowlist 的字面值；产物路径只接受上节三个结构化字段；
+- 统计并披露 unknown、malformed、redactions 和被跳过内容类别。
 
-# 被触及的文件
-jq -r '.. | strings' "$SESSION" |
-  grep -oE '[a-zA-Z_./~-]+\.(py|cu|md|txt|pdf|h|cc|json|jsonl|ts|js)' | sort -u
-```
+如果无法可靠解析或脱敏某条记录，跳过它并披露限制；不得猜测字段、回显原始
+记录或伪造对话。仅含私有块或不安全工具 payload 的分支可记录为“无可安全
+提取的最终文本”，不能用原始工具数据补齐。
+
+## 第 3 步：来源与 provenance
+
+把明确 transcript 自身作为来源，不从未知事件中自动提取 URL、查询或文件。
+provenance 至少记录：
+
+- 用户明确提供的 transcript 路径或稳定标识符；
+- Pi 树结构是否验证、分支点数量（若可得）；
+- unknown、malformed、redactions 与跳过类别；
+- 未访问隐藏分支／agent 的边界，以及任何安全降级限制；
+- 原 transcript 未被修改，注册版本对应不可变 snapshot。
 
 ## 会话页面模板
 
 ```markdown
 ---
-title: "Session YYYY-MM-DD: <主题>"
-type: session
+title: "Pi Session YYYY-MM-DD: <主题>"
+type: source
 updated: YYYY-MM-DD
 sources:
-  - /absolute/path/to/session.jsonl
+  - <明确 transcript snapshot 或不可变 locator>
 see_also: []
 ---
 
-## 引言
-一行摘要。
-
-## 结构
-线性 / 分叉（N 个分支）。是否跨日？是否触发速率限制？
+## 提取说明
+分支结构、unknown/malformed/redactions 统计与安全降级限制。
 
 ## 关键内容
-- 用户询问 X → 助手回复 Y
+仅包含已脱敏的用户文本、助手最终文本和安全产物路径摘要。
 
-## 值得注意的事件
-- 速率限制，时间戳："..."
-- 获取失败：URL、原因
-- 产生的产物：文件路径
+## 可靠性
+说明未解析记录、不可见分支和其他证据边界，不填补缺失内容。
 ```
 
 ## 应避免的错误
 
-1. **❌ 按时间戳线性扫描**——会遗漏恢复会话和分叉分支。
-2. **❌ 跳过自定义事件**——会遗漏获取失败、速率限制、错误。
-3. **❌ 将工具调用分支视为空**——助手可能通过
-   `write`/`edit` 产出了 40KB 的文件但无文本回复。
+1. 按时间戳线性拼接树形会话。
+2. 打印 reasoning、未知事件、完整错误、URL/query、工具参数或工具结果。
+3. 扫描目录猜 current session，或承诺取得未明确提供的隐藏轨迹。
+4. 在脱敏前把会话内容输出到终端或持久化到 Wiki。

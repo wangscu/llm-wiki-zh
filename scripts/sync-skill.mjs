@@ -91,6 +91,9 @@ async function inspectSafePath(
   if (expected === "file" && !metadata.isFile()) {
     throw new Error(`${label} 不是普通文件 / ${label} is not a regular file: ${shownPath}`);
   }
+  if (expected === "file" && metadata.nlink > 1) {
+    throw new Error(`${label} 存在多个硬链接 / ${label} has multiple hard links: ${shownPath}`);
+  }
   if (expected === "directory" && !metadata.isDirectory()) {
     throw new Error(`${label} 不是目录 / ${label} is not a directory: ${shownPath}`);
   }
@@ -280,7 +283,7 @@ function parseArguments(argumentsList) {
       root = value;
       index += 1;
     } else {
-      throw new Error(`未知参数 / Unknown argument: ${argument}`);
+      throw new Error("未知参数 / Unknown argument");
     }
   }
   return { check, root };

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { link, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -211,7 +211,94 @@ test("rejects source and package symlink read escapes before mutation", async (t
   });
 });
 
-test("sync CLI runs through a symlink and rejects unsafe arguments", async (t) => {
+test("rejects a hard-linked generated file in check and write modes without changing outside bytes", async (t) => {
+  for (const check of [true, false]) {
+    await t.test(check ? "check mode" : "write mode", async (t) => {
+      const root = await makeFixture(t);
+      const outside = await makeTempDirectory(t, "llm-wiki-zh-sync-outside-");
+      const outsideFile = path.join(outside, "outside-target.txt");
+      const outsideBytes = "outside generated sentinel\n";
+      await writeFile(outsideFile, outsideBytes);
+      await mkdir(path.join(root, "skills/llm-wiki-zh"), { recursive: true });
+      await link(outsideFile, path.join(root, "skills/llm-wiki-zh/SKILL.md"));
+
+      await assert.rejects(
+        syncRepository(root, { check }),
+        /硬链接.*hard links|hard links.*硬链接/iu,
+      );
+      assert.equal(await readFile(outsideFile, "utf8"), outsideBytes);
+      assert.equal(await readFile(path.join(root, "skills/llm-wiki-zh/SKILL.md"), "utf8"), outsideBytes);
+    });
+  }
+});
+
+test("rejects a hard-linked root manifest in check and write modes without changing outside JSON", async (t) => {
+  for (const check of [true, false]) {
+    await t.test(check ? "check mode" : "write mode", async (t) => {
+      const root = await makeFixture(t);
+      const outside = await makeTempDirectory(t, "llm-wiki-zh-sync-outside-");
+      const outsideManifest = path.join(outside, "outside-manifest.json");
+      const outsideBytes = '{"name":"outside","version":"1.4.0","sentinel":"unchanged"}\n';
+      await writeFile(outsideManifest, outsideBytes);
+      await rm(path.join(root, "plugin.json"));
+      await link(outsideManifest, path.join(root, "plugin.json"));
+
+      await assert.rejects(
+        syncRepository(root, { check }),
+        /硬链接.*hard links|hard links.*硬链接/iu,
+      );
+      assert.equal(await readFile(outsideManifest, "utf8"), outsideBytes);
+      assert.equal(await readFile(path.join(root, "plugin.json"), "utf8"), outsideBytes);
+    });
+  }
+});
+
+test("rejects hard-linked source, package, and stale files through the shared file boundary", async (t) => {
+  await t.test("source file", async (t) => {
+    const root = await makeFixture(t);
+    const outside = await makeTempDirectory(t, "llm-wiki-zh-sync-outside-");
+    const outsideFile = path.join(outside, "source.md");
+    const outsideBytes = "outside source sentinel\n";
+    await writeFile(outsideFile, outsideBytes);
+    await rm(path.join(root, "llm-wiki-zh/SKILL.md"));
+    await link(outsideFile, path.join(root, "llm-wiki-zh/SKILL.md"));
+
+    await assert.rejects(syncRepository(root, { check: false }), /hard links|硬链接/iu);
+    assert.equal(await readFile(outsideFile, "utf8"), outsideBytes);
+    await assert.rejects(readFile(path.join(root, "skills/llm-wiki-zh/SKILL.md")));
+  });
+
+  await t.test("package file", async (t) => {
+    const root = await makeFixture(t);
+    const outside = await makeTempDirectory(t, "llm-wiki-zh-sync-outside-");
+    const outsideFile = path.join(outside, "package.json");
+    const outsideBytes = '{"name":"outside","version":"9.9.9"}\n';
+    await writeFile(outsideFile, outsideBytes);
+    await rm(path.join(root, "package.json"));
+    await link(outsideFile, path.join(root, "package.json"));
+
+    await assert.rejects(syncRepository(root, { check: false }), /hard links|硬链接/iu);
+    assert.equal(await readFile(outsideFile, "utf8"), outsideBytes);
+    await assert.rejects(readFile(path.join(root, "skills/llm-wiki-zh/SKILL.md")));
+  });
+
+  await t.test("stale generated file", async (t) => {
+    const root = await makeFixture(t);
+    const outside = await makeTempDirectory(t, "llm-wiki-zh-sync-outside-");
+    const outsideFile = path.join(outside, "stale.md");
+    const outsideBytes = "outside stale sentinel\n";
+    await writeFile(outsideFile, outsideBytes);
+    await mkdir(path.join(root, "skills/llm-wiki-zh"), { recursive: true });
+    await writeFile(path.join(root, "skills/llm-wiki-zh/SKILL.md"), "canonical\n");
+    await link(outsideFile, path.join(root, "skills/llm-wiki-zh/stale.md"));
+
+    await assert.rejects(syncRepository(root, { check: false }), /hard links|硬链接/iu);
+    assert.equal(await readFile(outsideFile, "utf8"), outsideBytes);
+    assert.equal(await readFile(path.join(root, "skills/llm-wiki-zh/stale.md"), "utf8"), outsideBytes);
+  });
+});
+
+test("sync CLI runs through a symlink and rejects secret-bearing arguments without echoing them", async (t) => {
   const root = await makeFixture(t);
   await syncRepository(root, { check: false });
   const directory = await makeTempDirectory(t, "llm-wiki-zh-sync-cli-");
@@ -221,10 +308,17 @@ test("sync CLI runs through a symlink and rejects unsafe arguments", async (t) =
   const valid = spawnSync(process.execPath, [linkedScript, "--check", "--root", root], { encoding: "utf8" });
   assert.equal(valid.status, 0, valid.stderr);
 
-  const invalid = spawnSync(process.execPath, [linkedScript, "--unknown"], { encoding: "utf8" });
-  assert.notEqual(invalid.status, 0);
-  assert.equal(invalid.stdout, "");
-  assert.notEqual(invalid.stderr, "");
+  const cases = [
+    [SCRIPT, "--token=SYNTH_DIRECT_ARGUMENT_SECRET"],
+    [linkedScript, "--token=SYNTH_SYMLINK_ARGUMENT_SECRET"],
+  ];
+  for (const [script, argument] of cases) {
+    const invalid = spawnSync(process.execPath, [script, argument], { encoding: "utf8" });
+    assert.notEqual(invalid.status, 0);
+    assert.equal(invalid.stdout, "");
+    assert.notEqual(invalid.stderr, "");
+    assert.doesNotMatch(invalid.stderr, /SYNTH_(?:DIRECT|SYMLINK)_ARGUMENT_SECRET/);
+  }
 });
 
 test("npm metadata describes bilingual Pi, Codex CLI, and Claude Code discovery", async () => {

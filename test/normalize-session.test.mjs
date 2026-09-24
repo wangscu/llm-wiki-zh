@@ -231,6 +231,35 @@ test("Codex rejects unknown user shapes and assistant phases deny-by-default", (
   assert.doesNotMatch(result.output, /SYNTH_/);
 });
 
+test("Codex rejects bare-string user and final assistant content as unknown shapes", () => {
+  const input = [
+    {
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "user",
+        content: "SYNTH_BARE_STRING_USER",
+      },
+    },
+    {
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "assistant",
+        phase: "final_answer",
+        content: "SYNTH_BARE_STRING_ASSISTANT",
+      },
+    },
+  ].map(value => JSON.stringify(value)).join("\n");
+
+  const result = normalizeSession(input, { format: "codex" });
+
+  assert.equal(result.output, "# 规范化代理会话\n");
+  assert.equal(result.stats.messages, 0);
+  assert.equal(result.stats.unknownRecords, 2);
+  assert.doesNotMatch(result.output, /SYNTH_BARE_STRING/);
+});
+
 test("CLI rejects missing files, unknown arguments, and unsupported format values", () => {
   const cases = [
     [],
@@ -473,6 +502,8 @@ test("redacts standalone Bearer and Basic credentials without matching embedded 
   const cases = [
     ["Bearer SYNTH_STANDALONE_BEARER", "Bearer [REDACTED]", 1],
     ["Basic U1lOVEhfQkFTSUM6U0VDUkVU", "Basic [REDACTED]", 1],
+    ["Use Basic authentication", "Use Basic authentication", 0],
+    ["Bearer authentication", "Bearer authentication", 0],
     ["NotBearer SYNTH_NOT_BEARER", "NotBearer SYNTH_NOT_BEARER", 0],
     ["Not-Bearer SYNTH_NOT_BEARER", "Not-Bearer SYNTH_NOT_BEARER", 0],
     ["Basic", "Basic", 0],

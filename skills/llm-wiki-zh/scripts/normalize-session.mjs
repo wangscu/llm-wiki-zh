@@ -95,6 +95,25 @@ function redactUrls(value, state) {
   return value.replace(/\b[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s<>"']+/gu, (urlText) => redactUrl(urlText, state));
 }
 
+function isStandaloneBasicCredential(value) {
+  if (!/^[A-Za-z0-9+/]+={0,2}$/u.test(value)) {
+    return false;
+  }
+  const unpadded = value.replace(/=+$/u, "");
+  const decoded = Buffer.from(value, "base64");
+  if (!decoded.toString("utf8").includes(":")) {
+    return false;
+  }
+  return decoded.toString("base64").replace(/=+$/u, "") === unpadded;
+}
+
+function isStandaloneCredential(scheme, value) {
+  if (scheme.trim().toLowerCase() === "basic") {
+    return isStandaloneBasicCredential(value);
+  }
+  return value.length >= 16;
+}
+
 export function redactText(text) {
   const state = { redactions: 0 };
   let redacted = replaceMatches(
@@ -147,7 +166,7 @@ export function redactText(text) {
   redacted = replaceMatches(
     redacted,
     /(?<![A-Za-z0-9_-])((?:Bearer|Basic)\s+)(?!\[REDACTED\])([A-Za-z0-9._~+\/-]+={0,2})(?![A-Za-z0-9._~+\/=-])/gi,
-    (_match, scheme) => `${scheme}[REDACTED]`,
+    (match, scheme, value) => isStandaloneCredential(scheme, value) ? `${scheme}[REDACTED]` : match,
     state,
   );
   redacted = replaceMatches(redacted, /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, "[REDACTED]", state);
@@ -356,6 +375,9 @@ function normalizeCodexRecord(record, stats) {
       && payload.phase !== undefined
       && payload.phase !== "final_answer"
     ) {
+      return { recognized: false };
+    }
+    if (!Array.isArray(payload.content)) {
       return { recognized: false };
     }
     const fragments = textBlocks(payload.content, new Set(["input_text", "output_text", "text"]));

@@ -1,0 +1,5 @@
+{"type":"session_meta","payload":{"id":"session-123","cwd":"/tmp/private-project"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Compare the release candidates."}]}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"The second candidate is safer."}]}}
+{"type":"response_item","payload":{"type":"function_call","name":"download","arguments":"{\"path\":\"artifacts/report.md\",\"url\":\"https://example.com/private?X-Amz-Signature=signed-secret&download=1\"}"}}
+{"type":"private_event","payload":{"refresh_token":"unknown-secret"}}

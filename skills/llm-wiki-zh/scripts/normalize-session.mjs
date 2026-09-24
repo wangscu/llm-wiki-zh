@@ -185,7 +185,7 @@ export function redactText(text) {
   redacted = replaceMatches(redacted, /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, "[REDACTED]", state);
   redacted = replaceMatches(redacted, /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, "[REDACTED]", state);
   redacted = replaceMatches(redacted, /\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b/g, "[REDACTED]", state);
-  redacted = replaceMatches(redacted, /\bxox[a-zA-Z]?-[A-Za-z0-9-]{20,}\b/g, "[REDACTED]", state);
+  redacted = replaceMatches(redacted, /\bxox[a-zA-Z]?[-_][A-Za-z0-9-_]{20,}\b/g, "[REDACTED]", state);
   redacted = replaceMatches(redacted, /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, "[REDACTED]", state);
 
   return { text: redacted, redactions: state.redactions };

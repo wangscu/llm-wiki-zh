@@ -1,0 +1,15 @@
+{
+  "name": "llm-wiki-zh",
+  "version": "1.5.0",
+  "description": "构建和维护中文 LLM Wiki / Build and maintain a Chinese LLM Wiki",
+  "author": {
+    "name": "wangscu"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "LLM Wiki Zh",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "defaultPrompt": "Query an existing Wiki before proposing changes."
+  }
+}

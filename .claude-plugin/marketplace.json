@@ -1,0 +1,12 @@
+{
+  "name": "llm-wiki-zh-marketplace",
+  "owner": {
+    "name": "wangscu"
+  },
+  "plugins": [
+    {
+      "name": "llm-wiki-zh",
+      "source": "./"
+    }
+  ]
+}

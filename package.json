@@ -1,6 +1,6 @@
 {
   "name": "@micuintus/llm-wiki",
-  "version": "1.0.4",
+  "version": "1.5.0",
   "description": "Karpathy 的 LLM Wiki 模式：面向 pi 的极简、跨代理技能",
   "keywords": [
     "pi-package",
@@ -20,9 +20,20 @@
   },
   "files": [
     "llm-wiki-zh",
+    "skills",
+    "plugin.json",
+    ".codex-plugin",
+    ".claude-plugin",
+    ".agents",
+    "scripts",
     "README.md",
     "LICENSE"
   ],
+  "scripts": {
+    "sync:skill": "node scripts/sync-skill.mjs",
+    "check:skill": "node scripts/sync-skill.mjs --check",
+    "test": "node --experimental-strip-types --test"
+  },
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": "*"
   },

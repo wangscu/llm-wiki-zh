@@ -11,8 +11,8 @@
 从本仓库复制完整的生成目录 `skills/llm-wiki-zh/`，不要只复制 `SKILL.md`；`references/` 与 `scripts/` 必须随 Skill 一起安装。
 
 ```bash
-mkdir -p .codex/skills
-cp -R /absolute/path/to/llm-wiki-zh/skills/llm-wiki-zh .codex/skills/llm-wiki-zh
+mkdir -p .codex/skills/llm-wiki-zh
+cp -R /absolute/path/to/llm-wiki-zh/skills/llm-wiki-zh/. .codex/skills/llm-wiki-zh/
 ```
 
 ### Claude Code CLI：项目级手动复制（推荐）
@@ -20,11 +20,13 @@ cp -R /absolute/path/to/llm-wiki-zh/skills/llm-wiki-zh .codex/skills/llm-wiki-zh
 同样复制完整的生成目录：
 
 ```bash
-mkdir -p .claude/skills
-cp -R /absolute/path/to/llm-wiki-zh/skills/llm-wiki-zh .claude/skills/llm-wiki-zh
+mkdir -p .claude/skills/llm-wiki-zh
+cp -R /absolute/path/to/llm-wiki-zh/skills/llm-wiki-zh/. .claude/skills/llm-wiki-zh/
 ```
 
-项目级安装让团队可以审核并固定 Skill 版本。确有跨项目需要时，也可以把同一完整目录复制到用户级 `~/.codex/skills/llm-wiki-zh/` 或 `~/.claude/skills/llm-wiki-zh/`；用户级复制是可选项，不替代项目级安装建议。
+末尾的 `/.` 表示复制目录内容；重复执行会原位更新，不会生成嵌套的 `llm-wiki-zh/llm-wiki-zh/`。若升级版本删除或重命名过文件，先仅删除对应的 `.codex/skills/llm-wiki-zh/` 或 `.claude/skills/llm-wiki-zh/` 安装目录，再执行上述命令，以免保留陈旧文件；这不会触碰项目的 `<root>/llm-wiki/` 数据。
+
+项目级安装让团队可以审核并固定 Skill 版本。确有跨项目需要时，也可以用同样的“创建目标目录，再复制源目录 `/.` 内容”方式更新用户级 `~/.codex/skills/llm-wiki-zh/` 或 `~/.claude/skills/llm-wiki-zh/`；用户级复制是可选项，不替代项目级安装建议。
 
 ### Pi：Git 安装
 

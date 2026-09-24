@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -31,8 +31,14 @@ async function mutateJson(filePath, mutate) {
   await writeJson(filePath, nextValue);
 }
 
-async function makeValidPluginFixture() {
-  const root = await mkdtemp(path.join(tmpdir(), "llm-wiki-zh-validate-"));
+async function makeTemporaryDirectory(t, prefix) {
+  const directory = await mkdtemp(path.join(tmpdir(), prefix));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  return directory;
+}
+
+async function makeValidPluginFixture(t) {
+  const root = await makeTemporaryDirectory(t, "llm-wiki-zh-validate-");
   const skillFiles = new Map([
     ["SKILL.md", [
       "---",
@@ -123,13 +129,13 @@ function assertBilingualIssues(issues) {
   }
 }
 
-test("accepts a complete dual-host plugin root", async () => {
-  const root = await makeValidPluginFixture();
+test("accepts a complete dual-host plugin root", async (t) => {
+  const root = await makeValidPluginFixture(t);
   assert.deepEqual(await validateRepository(root), []);
 });
 
-test("reports Claude version drift and an unresolved generated reference", async () => {
-  const root = await makeValidPluginFixture();
+test("reports Claude version drift and an unresolved generated reference", async (t) => {
+  const root = await makeValidPluginFixture(t);
   await mutateJson(path.join(root, ".claude-plugin/plugin.json"), value => ({ ...value, version: "1.4.8" }));
   await writeFile(path.join(root, "skills/llm-wiki-zh/SKILL.md"), "Read references/missing.md\n");
 
@@ -141,8 +147,8 @@ test("reports Claude version drift and an unresolved generated reference", async
   assertBilingualIssues(issues);
 });
 
-test("rejects Codex marketplace traversal and missing policy", async () => {
-  const root = await makeValidPluginFixture();
+test("rejects Codex marketplace traversal and missing policy", async (t) => {
+  const root = await makeValidPluginFixture(t);
   await mutateJson(path.join(root, ".agents/plugins/marketplace.json"), value => {
     value.plugins[0].source.path = "../..";
     delete value.plugins[0].policy;
@@ -156,29 +162,43 @@ test("rejects Codex marketplace traversal and missing policy", async () => {
   assertBilingualIssues(issues);
 });
 
-test("accepts only strict MAJOR.MINOR.PATCH package versions", async () => {
+test("accepts only strict MAJOR.MINOR.PATCH package versions", async (t) => {
   const invalidVersions = ["v1.5.0", "1.5.0-rc.1", "1.5.0+build", "1.5", "01.5.0", "1.05.0", "1.5.00"];
 
   for (const version of invalidVersions) {
-    const root = await makeValidPluginFixture();
+    const root = await makeValidPluginFixture(t);
     await mutateJson(path.join(root, "package.json"), value => ({ ...value, version }));
     const issues = await validateRepository(root);
     assert.ok(issues.some(issue => issue.includes("package.json") && issue.includes("MAJOR.MINOR.PATCH")), version);
   }
 });
 
-test("requires every plugin manifest version to equal the package version", async () => {
+test("reports all manifest mismatches even when the package version is invalid", async (t) => {
+  const root = await makeValidPluginFixture(t);
+  await mutateJson(path.join(root, "package.json"), value => ({ ...value, version: "1.5" }));
+  await mutateJson(path.join(root, "plugin.json"), value => ({ ...value, version: "9.9.9" }));
+  await mutateJson(path.join(root, ".codex-plugin/plugin.json"), value => ({ ...value, version: "8.8.8" }));
+  await mutateJson(path.join(root, ".claude-plugin/plugin.json"), value => ({ ...value, version: "7.7.7" }));
+
+  const issues = await validateRepository(root);
+
+  assert.ok(issues.some(issue => issue.includes("plugin.json version")));
+  assert.ok(issues.some(issue => issue.includes(".codex-plugin/plugin.json version")));
+  assert.ok(issues.some(issue => issue.includes(".claude-plugin/plugin.json version")));
+});
+
+test("requires every plugin manifest version to equal the package version", async (t) => {
   const manifestPaths = ["plugin.json", ".codex-plugin/plugin.json", ".claude-plugin/plugin.json"];
 
   for (const manifestPath of manifestPaths) {
-    const root = await makeValidPluginFixture();
+    const root = await makeValidPluginFixture(t);
     await mutateJson(path.join(root, manifestPath), value => ({ ...value, version: "1.4.8" }));
     const issues = await validateRepository(root);
     assert.ok(issues.some(issue => issue.includes(manifestPath) && issue.includes("version")), manifestPath);
   }
 });
 
-test("requires canonical plugin and marketplace names", async () => {
+test("requires canonical plugin and marketplace names", async (t) => {
   const cases = [
     ["plugin.json", value => ({ ...value, name: "wrong" })],
     [".codex-plugin/plugin.json", value => ({ ...value, name: "wrong" })],
@@ -190,17 +210,17 @@ test("requires canonical plugin and marketplace names", async () => {
   ];
 
   for (const [relativePath, mutate] of cases) {
-    const root = await makeValidPluginFixture();
+    const root = await makeValidPluginFixture(t);
     await mutateJson(path.join(root, relativePath), mutate);
     const issues = await validateRepository(root);
     assert.ok(issues.some(issue => issue.includes(relativePath) && issue.includes("name")), relativePath);
   }
 });
 
-test("requires exact local marketplace roots and rejects absolute or parent paths", async () => {
+test("requires exact local marketplace roots and rejects absolute or parent paths", async (t) => {
   const codexPaths = ["/tmp/plugin", "../plugin", "nested/../plugin", "plugin"];
   for (const sourcePath of codexPaths) {
-    const root = await makeValidPluginFixture();
+    const root = await makeValidPluginFixture(t);
     await mutateJson(path.join(root, ".agents/plugins/marketplace.json"), value => {
       value.plugins[0].source.path = sourcePath;
       return value;
@@ -209,7 +229,7 @@ test("requires exact local marketplace roots and rejects absolute or parent path
     assert.ok(issues.some(issue => issue.includes("source.path")), sourcePath);
   }
 
-  const root = await makeValidPluginFixture();
+  const root = await makeValidPluginFixture(t);
   await mutateJson(path.join(root, ".claude-plugin/marketplace.json"), value => {
     value.plugins[0].source = "../plugin";
     return value;
@@ -218,7 +238,7 @@ test("requires exact local marketplace roots and rejects absolute or parent path
   assert.ok(issues.some(issue => issue.includes("source") && issue.includes(".claude-plugin/marketplace.json")));
 });
 
-test("requires exact Codex marketplace policy and category semantics", async () => {
+test("requires exact Codex marketplace policy and category semantics", async (t) => {
   const mutations = [
     value => { value.plugins[0].source.source = "git"; return value; },
     value => { value.plugins[0].policy.installation = "AUTO"; return value; },
@@ -227,14 +247,34 @@ test("requires exact Codex marketplace policy and category semantics", async () 
   ];
 
   for (const mutate of mutations) {
-    const root = await makeValidPluginFixture();
+    const root = await makeValidPluginFixture(t);
     await mutateJson(path.join(root, ".agents/plugins/marketplace.json"), mutate);
     assert.notDeepEqual(await validateRepository(root), []);
   }
 });
 
-test("requires Claude marketplace owner and bilingual discovery description fields to be nonempty", async () => {
-  const root = await makeValidPluginFixture();
+test("rejects additional Codex and Claude marketplace plugin entries", async (t) => {
+  const root = await makeValidPluginFixture(t);
+  await mutateJson(path.join(root, ".agents/plugins/marketplace.json"), value => {
+    value.plugins.push({
+      name: "evil",
+      source: { source: "local", path: "../../outside" },
+    });
+    return value;
+  });
+  await mutateJson(path.join(root, ".claude-plugin/marketplace.json"), value => {
+    value.plugins.push({ name: "evil", source: "../../outside" });
+    return value;
+  });
+
+  const issues = await validateRepository(root);
+
+  assert.ok(issues.some(issue => issue.includes(".agents/plugins/marketplace.json") && issue.includes("exactly one")));
+  assert.ok(issues.some(issue => issue.includes(".claude-plugin/marketplace.json") && issue.includes("exactly one")));
+});
+
+test("requires Claude marketplace owner and bilingual discovery description fields to be nonempty", async (t) => {
+  const root = await makeValidPluginFixture(t);
   await mutateJson(path.join(root, ".claude-plugin/marketplace.json"), value => {
     value.owner.name = "";
     value.metadata.description = "";
@@ -247,7 +287,7 @@ test("requires Claude marketplace owner and bilingual discovery description fiel
   assert.ok(issues.some(issue => issue.includes("metadata.description")));
 });
 
-test("requires Codex author, skill path, and presentation interface", async () => {
+test("requires Codex author, skill path, and presentation interface", async (t) => {
   const mutations = [
     value => { value.author.name = ""; return value; },
     value => { value.skills = "skills"; return value; },
@@ -261,14 +301,14 @@ test("requires Codex author, skill path, and presentation interface", async () =
   ];
 
   for (const mutate of mutations) {
-    const root = await makeValidPluginFixture();
+    const root = await makeValidPluginFixture(t);
     await mutateJson(path.join(root, ".codex-plugin/plugin.json"), mutate);
     assert.notDeepEqual(await validateRepository(root), []);
   }
 });
 
-test("reports missing, changed, and stale generated Skill files without repairing them", async () => {
-  const root = await makeValidPluginFixture();
+test("reports missing, changed, and stale generated Skill files without repairing them", async (t) => {
+  const root = await makeValidPluginFixture(t);
   await rm(path.join(root, "skills/llm-wiki-zh/references/guide.md"));
   await writeFile(path.join(root, "skills/llm-wiki-zh/scripts/helper.mjs"), "changed\n");
   await writeFile(path.join(root, "skills/llm-wiki-zh/stale.md"), "stale\n");
@@ -283,8 +323,19 @@ test("reports missing, changed, and stale generated Skill files without repairin
   await assert.rejects(readFile(path.join(root, "skills/llm-wiki-zh/references/guide.md")));
 });
 
-test("reports a missing canonical Skill tree as an issue instead of throwing", async () => {
-  const root = await makeValidPluginFixture();
+test("reports generated Skill drift even when a manifest is malformed", async (t) => {
+  const root = await makeValidPluginFixture(t);
+  await writeFile(path.join(root, ".claude-plugin/plugin.json"), "{bad json\n");
+  await rm(path.join(root, "skills/llm-wiki-zh/scripts/helper.mjs"));
+
+  const issues = await validateRepository(root);
+
+  assert.ok(issues.some(issue => issue.includes(".claude-plugin/plugin.json") && issue.includes("malformed")));
+  assert.ok(issues.some(issue => issue.includes("missing: skills/llm-wiki-zh/scripts/helper.mjs")));
+});
+
+test("reports a missing canonical Skill tree as an issue instead of throwing", async (t) => {
+  const root = await makeValidPluginFixture(t);
   await rm(path.join(root, "llm-wiki-zh"), { recursive: true });
 
   const issues = await validateRepository(root);
@@ -293,7 +344,7 @@ test("reports a missing canonical Skill tree as an issue instead of throwing", a
   assertBilingualIssues(issues);
 });
 
-test("resolves safe Skill references and rejects unresolved, traversal, and absolute references", async () => {
+test("resolves safe Skill references and rejects unresolved, traversal, and absolute references", async (t) => {
   const cases = [
     ["Read references/missing.md\n", "references/missing.md"],
     ["Read references/../outside.md\n", "references/../outside.md"],
@@ -302,7 +353,7 @@ test("resolves safe Skill references and rejects unresolved, traversal, and abso
   ];
 
   for (const [skill, token] of cases) {
-    const root = await makeValidPluginFixture();
+    const root = await makeValidPluginFixture(t);
     await writeFile(path.join(root, "llm-wiki-zh/SKILL.md"), skill);
     await writeFile(path.join(root, "skills/llm-wiki-zh/SKILL.md"), skill);
     const issues = await validateRepository(root);
@@ -310,8 +361,54 @@ test("resolves safe Skill references and rejects unresolved, traversal, and abso
   }
 });
 
-test("requires package files to cover every distributed surface and accepts parent coverage", async () => {
-  const root = await makeValidPluginFixture();
+test("rejects a required JSON file symlink before reading its external target", async (t) => {
+  const root = await makeValidPluginFixture(t);
+  const outside = await makeTemporaryDirectory(t, "llm-wiki-zh-outside-");
+  const marketplacePath = path.join(root, ".agents/plugins/marketplace.json");
+  const externalPath = path.join(outside, "marketplace.json");
+  await writeFile(externalPath, await readFile(marketplacePath));
+  await rm(marketplacePath);
+  await symlink(externalPath, marketplacePath);
+
+  const issues = await validateRepository(root);
+
+  assert.ok(issues.some(issue => issue.includes(".agents/plugins/marketplace.json") && issue.includes("symbolic link")));
+});
+
+test("rejects an external intermediate symlink in each Skill tree", async (t) => {
+  const root = await makeValidPluginFixture(t);
+  const outside = await makeTemporaryDirectory(t, "llm-wiki-zh-outside-");
+  await writeFile(path.join(outside, "external.md"), "external\n");
+  for (const skillRoot of ["llm-wiki-zh", "skills/llm-wiki-zh"]) {
+    await symlink(outside, path.join(root, skillRoot, "references/bridge"));
+    await writeFile(
+      path.join(root, skillRoot, "SKILL.md"),
+      "Read references/guide.md and references/bridge/external.md; run scripts/helper.mjs.\n",
+    );
+  }
+
+  const issues = await validateRepository(root);
+
+  assert.ok(issues.some(issue => issue.includes("llm-wiki-zh/references/bridge") && issue.includes("symbolic link")));
+  assert.ok(issues.some(issue => issue.includes("skills/llm-wiki-zh/references/bridge") && issue.includes("symbolic link")));
+});
+
+test("rejects a symlinked SKILL.md instead of reading outside the repository", async (t) => {
+  const root = await makeValidPluginFixture(t);
+  const outside = await makeTemporaryDirectory(t, "llm-wiki-zh-outside-");
+  const canonicalSkill = path.join(root, "llm-wiki-zh/SKILL.md");
+  const externalSkill = path.join(outside, "SKILL.md");
+  await writeFile(externalSkill, await readFile(canonicalSkill));
+  await rm(canonicalSkill);
+  await symlink(externalSkill, canonicalSkill);
+
+  const issues = await validateRepository(root);
+
+  assert.ok(issues.some(issue => issue.includes("llm-wiki-zh/SKILL.md") && issue.includes("symbolic link")));
+});
+
+test("requires package files to cover every distributed surface and accepts parent coverage", async (t) => {
+  const root = await makeValidPluginFixture(t);
   await mutateJson(path.join(root, "package.json"), value => ({ ...value, files: ["."] }));
   assert.deepEqual(await validateRepository(root), []);
 
@@ -328,8 +425,8 @@ test("requires package files to cover every distributed surface and accepts pare
   assert.ok(issues.some(issue => issue.includes("package.json.files") && issue.includes("string")));
 });
 
-test("turns malformed and missing required JSON files into path-specific issues", async () => {
-  const root = await makeValidPluginFixture();
+test("turns malformed and missing required JSON files into path-specific issues", async (t) => {
+  const root = await makeValidPluginFixture(t);
   await writeFile(path.join(root, ".codex-plugin/plugin.json"), "{bad json\n");
   await rm(path.join(root, ".claude-plugin/marketplace.json"));
 
@@ -340,8 +437,8 @@ test("turns malformed and missing required JSON files into path-specific issues"
   assertBilingualIssues(issues);
 });
 
-test("CLI prints exactly one success line for a clean root", async () => {
-  const root = await makeValidPluginFixture();
+test("CLI prints exactly one success line for a clean root", async (t) => {
+  const root = await makeValidPluginFixture(t);
   const run = spawnSync(process.execPath, [SCRIPT, "--root", root], { encoding: "utf8" });
 
   assert.equal(run.status, 0, run.stderr);
@@ -349,8 +446,8 @@ test("CLI prints exactly one success line for a clean root", async () => {
   assert.equal(run.stderr, "");
 });
 
-test("CLI prints sorted issues to stderr and exits one for an invalid root", async () => {
-  const root = await makeValidPluginFixture();
+test("CLI prints sorted issues to stderr and exits one for an invalid root", async (t) => {
+  const root = await makeValidPluginFixture(t);
   await mutateJson(path.join(root, ".claude-plugin/plugin.json"), value => ({ ...value, version: "1.4.8" }));
   const run = spawnSync(process.execPath, [SCRIPT, "--root", root], { encoding: "utf8" });
 
@@ -377,8 +474,47 @@ test("CLI rejects unknown flags and a missing root value without echoing unsafe 
   }
 });
 
-test("validation leaves all fixture bytes unchanged when drift exists", async () => {
-  const root = await makeValidPluginFixture();
+test("CLI launched through a symlink validates a clean root", async (t) => {
+  const root = await makeValidPluginFixture(t);
+  const directory = await makeTemporaryDirectory(t, "llm-wiki-zh-cli-");
+  const scriptLink = path.join(directory, "validate-package.mjs");
+  await symlink(SCRIPT, scriptLink);
+
+  const run = spawnSync(process.execPath, [scriptLink, "--root", root], { encoding: "utf8" });
+
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.stdout, "Package validation passed.\n");
+  assert.equal(run.stderr, "");
+});
+
+test("CLI launched through a symlink rejects an invalid root", async (t) => {
+  const root = await makeValidPluginFixture(t);
+  await mutateJson(path.join(root, ".claude-plugin/plugin.json"), value => ({ ...value, version: "1.4.8" }));
+  const directory = await makeTemporaryDirectory(t, "llm-wiki-zh-cli-");
+  const scriptLink = path.join(directory, "validate-package.mjs");
+  await symlink(SCRIPT, scriptLink);
+
+  const run = spawnSync(process.execPath, [scriptLink, "--root", root], { encoding: "utf8" });
+
+  assert.equal(run.status, 1);
+  assert.equal(run.stdout, "");
+  assert.match(run.stderr, /\.claude-plugin\/plugin\.json/);
+});
+
+test("CLI launched through a symlink rejects unknown flags", async (t) => {
+  const directory = await makeTemporaryDirectory(t, "llm-wiki-zh-cli-");
+  const scriptLink = path.join(directory, "validate-package.mjs");
+  await symlink(SCRIPT, scriptLink);
+
+  const run = spawnSync(process.execPath, [scriptLink, "--unknown"], { encoding: "utf8" });
+
+  assert.equal(run.status, 1);
+  assert.equal(run.stdout, "");
+  assert.match(run.stderr, /[\u3400-\u9fff].*\/.*[A-Za-z]/u);
+});
+
+test("validation leaves all fixture bytes unchanged when drift exists", async (t) => {
+  const root = await makeValidPluginFixture(t);
   await writeFile(path.join(root, "skills/llm-wiki-zh/SKILL.md"), "changed generated bytes\n");
   const observedPaths = [
     "package.json",
